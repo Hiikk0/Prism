@@ -1,0 +1,31 @@
+import mongoose, { Schema, Document } from 'mongoose';
+
+export interface IMediaFile extends Document {
+  originalName: string;
+  savedName: string;
+  path: string;
+  mimeType: string;
+  size: number;
+  uploadedBy: mongoose.Types.ObjectId;
+  parentId?: mongoose.Types.ObjectId;
+  tags?: string[];
+  hash?: string;
+  metadata?: any;
+  createdAt: Date;
+}
+
+const MediaFileSchema: Schema = new Schema({
+  originalName: { type: String, required: true },
+  savedName: { type: String, required: true },
+  path: { type: String, required: true },
+  mimeType: { type: String, required: true },
+  size: { type: Number, required: true },
+  uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  parentId: { type: Schema.Types.ObjectId, ref: 'MediaFile', required: false },
+  tags: { type: [String], default: [] },
+  hash: { type: String, required: false },
+  metadata: { type: Schema.Types.Mixed, required: false },
+  createdAt: { type: Date, default: Date.now }
+});
+
+export const MediaFileModel = mongoose.model<IMediaFile>('MediaFile', MediaFileSchema);
