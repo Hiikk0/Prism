@@ -120,6 +120,47 @@ describe('Auth Routes & Middleware', () => {
     });
   });
 
+  describe('GET /api/auth/me', () => {
+    it('should return 401 if no cookies provided', async () => {
+      const response = await supertest(app.server).get('/api/auth/me');
+      expect(response.status).toBe(401);
+    });
+
+    it('should return user info if verified token in cookie', async () => {
+      // First register to get cookie
+      const authResponse = await supertest(app.server)
+        .post('/api/auth/register')
+        .send({ email: 'me@example.com', password: 'password123' });
+      
+      const cookie = authResponse.headers['set-cookie'][0];
+      
+      const response = await supertest(app.server)
+        .get('/api/auth/me')
+        .set('Cookie', [cookie]);
+
+      expect(response.status).toBe(200);
+      expect(response.body.user).toBeDefined();
+      expect(response.body.user.email).toBe('me@example.com');
+      expect(response.body.user.role).toBe('user');
+      expect(response.body.user).not.toHaveProperty('passwordHash');
+    });
+  });
+
+  describe('POST /api/auth/logout', () => {
+    it('should clear the token cookie', async () => {
+      const response = await supertest(app.server)
+        .post('/api/auth/logout');
+
+      expect(response.status).toBe(200);
+      expect(response.body.message).toBe('Logged out successfully');
+      
+      const cookies = response.headers['set-cookie'];
+      expect(cookies).toBeDefined();
+      expect(cookies[0]).toContain('token=;');
+      expect(cookies[0]).toMatch(/Max-Age=0|Expires=Thu, 01 Jan 1970/i);
+    });
+  });
+
   describe('RBAC Middleware & Cookies', () => {
     it('should deny access (403) when user lacks required role', async () => {
       const registerResponse = await supertest(app.server)

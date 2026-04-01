@@ -49,4 +49,27 @@ export class AuthController {
       return reply.status(500).send({ error: 'Internal Server Error' });
     }
   }
+
+  async me(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      const user = (request as any).user;
+      return reply.status(200).send({ user });
+    } catch (err: any) {
+      return reply.status(500).send({ error: 'Internal Server Error' });
+    }
+  }
+
+  async logout(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      reply.clearCookie('token', {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+      });
+      return reply.status(200).send({ message: 'Logged out successfully' });
+    } catch (err: any) {
+      return reply.status(500).send({ error: 'Internal Server Error' });
+    }
+  }
 }

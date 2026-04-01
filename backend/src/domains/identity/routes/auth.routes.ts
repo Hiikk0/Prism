@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { AuthController } from '../controllers/auth.controller';
 import { AuthService } from '../services/auth.service';
 import { UserRepository } from '../repositories/user.repository';
+import { authMiddleware } from '@/shared/middleware/auth.middleware';
 
 // JSON Schmea for validation
 const registerSchema = {
@@ -31,4 +32,6 @@ export default async function authRoutes(fastify: FastifyInstance, options: { jw
 
   fastify.post('/register', { schema: registerSchema }, authController.register.bind(authController));
   fastify.post('/login', { schema: loginSchema }, authController.login.bind(authController));
+  fastify.get('/me', { preHandler: [authMiddleware(options.jwtSecret)] }, authController.me.bind(authController));
+  fastify.post('/logout', authController.logout.bind(authController));
 }
