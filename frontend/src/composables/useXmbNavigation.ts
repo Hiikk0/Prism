@@ -1,4 +1,4 @@
-import { ref, computed, type Ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, type Ref } from 'vue';
 
 export interface XmbItem {
   id: string;
@@ -27,7 +27,7 @@ export function useXmbNavigation(
 ) {
   const { 
     hSpacing = 160, 
-    vSpacing = 80, 
+    vSpacing = 100, 
     crossX = '25%', 
     crossY = '35%',
     onSelect
@@ -39,13 +39,13 @@ export function useXmbNavigation(
   const activeCategory = computed(() => categories.value[activeCatIndex.value]);
   const activeItem = computed(() => activeCategory.value?.items[activeItemIndex.value]);
 
-  // Translation amounts
+  // Translation amounts (Purely relative to Origin)
   const horizontalTransform = computed(() => {
-    return `translateX(calc(${crossX} - ${activeCatIndex.value * hSpacing}px))`;
+    return `translateX(-${activeCatIndex.value * hSpacing}px)`;
   });
 
   const verticalTransform = computed(() => {
-    return `translateY(calc(${crossY} - ${activeItemIndex.value * vSpacing}px))`;
+    return `translateY(-${activeItemIndex.value * vSpacing}px)`;
   });
 
   // Navigation logic
