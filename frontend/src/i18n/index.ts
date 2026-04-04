@@ -8,7 +8,7 @@ const messages = {
     auth: {
       login: 'Login',
       register: 'Register',
-      email: 'Email',
+      username: 'Username',
       password: 'Password',
       confirm_password: 'Confirm Password',
       logout: 'Logout',
@@ -26,6 +26,24 @@ const messages = {
       recent: 'Recently Added',
       empty: 'No files found'
     },
+    settings: {
+      language: 'Language',
+      general: 'General Settings',
+      themes: 'Themes',
+      appearance: 'Appearance'
+    },
+    categories: {
+      user: 'Profile',
+      settings: 'Settings',
+      video: 'Videos',
+      music: 'Music',
+      image: 'Photos'
+    },
+    profile: {
+      view: 'View Profile',
+      change_username: 'Change Username',
+      change_password: 'Change Password'
+    }
   },
   uk: {
     common: {
@@ -34,7 +52,7 @@ const messages = {
     auth: {
       login: 'Увійти',
       register: 'Реєстрація',
-      email: 'Електронна пошта',
+      username: 'Ім\'я користувача',
       password: 'Пароль',
       confirm_password: 'Підтвердження пароля',
       logout: 'Вийти',
@@ -52,6 +70,24 @@ const messages = {
       recent: 'Нещодавно додані',
       empty: 'Файлів не знайдено'
     },
+    settings: {
+      language: 'Мова',
+      general: 'Загальні налаштування',
+      themes: 'Теми',
+      appearance: 'Вигляд'
+    },
+    categories: {
+      user: 'Профіль',
+      settings: 'Налаштування',
+      video: 'Відео',
+      music: 'Музика',
+      image: 'Фото'
+    },
+    profile: {
+      view: 'Переглянути профіль',
+      change_username: 'Змінити ім\'я',
+      change_password: 'Змінити пароль'
+    }
   },
 };
 

@@ -38,6 +38,11 @@ export function buildApp(opts = {}) {
   app.register(authRoutes, { prefix: '/api/auth', jwtSecret });
   app.register(fileRoutes, { prefix: '/api/files', jwtSecret, mediaRoot });
 
+  // Add Health Check for Playwright/Uptime
+  app.get('/api/health', async () => {
+    return { status: 'ok', timestamp: new Date().toISOString() };
+  });
+
   // Custom Error Handler for Validation
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error.validation) {

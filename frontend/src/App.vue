@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { useAuthStore } from './stores/auth';
+import XmbBackground from './components/layout/XmbBackground.vue';
 
 const authStore = useAuthStore();
 
@@ -12,16 +13,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="min-h-screen w-screen overflow-hidden font-sans text-white bg-black">
+  <div class="min-h-screen w-screen overflow-hidden font-sans text-white bg-transparent">
     <router-view v-slot="{ Component }">
       <transition name="page" mode="out-in">
         <component :is="Component" />
       </transition>
     </router-view>
 
-    <!-- Global Background Elements for Aero feel -->
-    <div class="fixed inset-0 pointer-events-none -z-10 bg-radial-gradient from-blue-900/10 to-transparent opacity-50 blur-3xl"></div>
-    <div class="fixed top-0 left-0 right-0 h-px pointer-events-none -z-10 bg-gradient-to-r from-transparent via-blue-500/30 to-transparent"></div>
+    <!-- Dynamic XMB-style background -->
+    <XmbBackground />
+
+    <!-- Base Layer (Bottom-most) -->
+    <div class="fixed inset-0 pointer-events-none -z-60 bg-[#020202] bg-gradient-to-br from-[#02040a] via-[#050505] to-[#020202]"></div>
   </div>
 </template>
 
