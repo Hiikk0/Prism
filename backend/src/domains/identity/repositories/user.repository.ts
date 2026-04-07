@@ -1,16 +1,36 @@
 import { UserModel, IUser } from '../models/user.model';
 
 export class UserRepository {
-  async findByEmail(email: string): Promise<IUser | null> {
-    return UserModel.findOne({ email }).exec();
+  async findByUsername(username: string): Promise<IUser | null> {
+    return UserModel.findOne({ username }).exec();
   }
 
   async findById(id: string): Promise<IUser | null> {
     return UserModel.findById(id).exec();
   }
 
+  async count(): Promise<number> {
+    return UserModel.countDocuments().exec();
+  }
+
   async create(data: any): Promise<IUser> {
     const user = new UserModel(data);
     return user.save();
+  }
+
+  async update(id: string, data: any): Promise<IUser | null> {
+    return UserModel.findByIdAndUpdate(id, data, { new: true }).exec();
+  }
+
+  async delete(id: string): Promise<any> {
+    return UserModel.findByIdAndDelete(id).exec();
+  }
+
+  async findAll(): Promise<IUser[]> {
+    return UserModel.find().exec();
+  }
+
+  async findByIsSystem(): Promise<IUser | null> {
+    return UserModel.findOne({ isSystem: true }).exec();
   }
 }

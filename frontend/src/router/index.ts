@@ -21,13 +21,13 @@ const router = createRouter({
     {
       path: '/files',
       name: 'files',
-      component: () => import('@/views/FilesView.vue'),
+      component: () => import('@/views/FileManagerView.vue'),
       meta: { requiresAuth: true },
     },
   ],
 });
 
-router.beforeEach(async (to, _from, next) => {
+router.beforeEach(async (to) => {
   const authStore = useAuthStore();
   
   if (!authStore.initialized) {
@@ -37,14 +37,14 @@ router.beforeEach(async (to, _from, next) => {
   const { user } = authStore;
   
   if (to.meta.requiresAuth && !user) {
-    return next({ name: 'auth' });
+    return { name: 'auth' };
   }
 
   if (to.meta.guestOnly && user) {
-    return next({ name: 'home' });
+    return { name: 'home' };
   }
 
-  next();
+  return true;
 });
 
 export default router;

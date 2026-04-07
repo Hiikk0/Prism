@@ -5,8 +5,11 @@ import { loadEsm } from 'load-esm';
 import * as fs from 'fs/promises';
 import path from 'path';
 
+import { SettingsRepository } from '@/domains/identity/repositories/settings.repository';
+
 jest.mock('@/domains/filesystem/repositories/mediafile.repository');
 jest.mock('@/domains/filesystem/services/media-processor.service');
+jest.mock('@/domains/identity/repositories/settings.repository');
 jest.mock('@/domains/filesystem/utils/hash.util');
 jest.mock('load-esm');
 jest.mock('fs/promises');
@@ -17,12 +20,21 @@ describe('ScannerService', () => {
     let scannerService: ScannerService;
     let mockRepo: jest.Mocked<MediaFileRepository>;
     let mockProcessor: jest.Mocked<MediaProcessorService>;
+    let mockSettingsRepo: jest.Mocked<SettingsRepository>;
     let mockWatcher: any;
     const MEDIA_ROOT = 'C:/media';
+    const SYSTEM_USER_ID = 'system_id';
 
     beforeEach(() => {
         mockRepo = new MediaFileRepository() as jest.Mocked<MediaFileRepository>;
         mockProcessor = new MediaProcessorService(mockRepo, MEDIA_ROOT, 'C:/th') as jest.Mocked<MediaProcessorService>;
+        mockSettingsRepo = new SettingsRepository() as jest.Mocked<SettingsRepository>;
+
+        mockSettingsRepo.getSettings.mockResolvedValue({
+            usePolling: false,
+            pollingInterval: 100,
+            mediaRootDirectory: MEDIA_ROOT
+        } as any);
 
         mockWatcher = {
             on: jest.fn().mockReturnThis(),
@@ -34,7 +46,7 @@ describe('ScannerService', () => {
             return {};
         });
 
-        scannerService = new ScannerService(mockRepo, mockProcessor, MEDIA_ROOT);
+        scannerService = new ScannerService(mockRepo, mockProcessor, MEDIA_ROOT, mockSettingsRepo, SYSTEM_USER_ID);
         jest.clearAllMocks();
     });
 

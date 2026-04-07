@@ -8,6 +8,7 @@ export interface IMediaFile extends Document {
   size: number;
   uploadedBy: mongoose.Types.ObjectId;
   parentId?: mongoose.Types.ObjectId;
+  isFolder: boolean;
   tags?: string[];
   hash?: string;
   metadata?: any;
@@ -22,6 +23,7 @@ const MediaFileSchema: Schema = new Schema({
   size: { type: Number, required: true },
   uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   parentId: { type: Schema.Types.ObjectId, ref: 'MediaFile', required: false },
+  isFolder: { type: Boolean, default: false },
   tags: { type: [String], default: [] },
   hash: { type: String, required: false },
   metadata: { type: Schema.Types.Mixed, required: false },

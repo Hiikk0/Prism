@@ -11,6 +11,23 @@
   --color-xmb-bg: #000000;
   
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+
+  --animate-wave-slow: wave-slow 25s ease-in-out infinite;
+  --animate-wave-fast: wave-fast 18s ease-in-out infinite;
+  --animate-wave-slow-reverse: wave-slow-reverse 35s ease-in-out infinite;
+
+  @keyframes wave-slow {
+    0%, 100% { transform: translateX(-5%) rotate(-1deg) translateY(0); }
+    50% { transform: translateX(5%) rotate(-1.5deg) translateY(10px); }
+  }
+  @keyframes wave-fast {
+    0%, 100% { transform: translateX(2%) rotate(1deg) translateY(0); }
+    50% { transform: translateX(-8%) rotate(1.5deg) translateY(-15px); }
+  }
+  @keyframes wave-slow-reverse {
+    0%, 100% { transform: translateX(8%) rotate(-0.5deg) translateY(0); }
+    50% { transform: translateX(-3%) rotate(-0.8deg) translateY(5px); }
+  }
 }
 
 @layer base {

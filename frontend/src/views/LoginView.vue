@@ -8,7 +8,7 @@ const { t } = useI18n();
 const authStore = useAuthStore();
 const router = useRouter();
 
-const email = ref('');
+const username = ref('');
 const password = ref('');
 const error = ref('');
 const loading = ref(false);
@@ -17,7 +17,7 @@ const handleLogin = async () => {
   loading.value = true;
   error.value = '';
   try {
-    await authStore.login({ email: email.value, password: password.value });
+    await authStore.login({ email: username.value, password: password.value });
     router.push({ name: 'home' });
   } catch (err: any) {
     error.value = err.response?.data?.error || t('auth.error_generic');
@@ -37,13 +37,13 @@ const handleLogin = async () => {
 
       <form @submit.prevent="handleLogin" class="space-y-6">
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">{{ t('auth.email') }}</label>
+          <label class="block text-sm font-medium text-gray-300 mb-1">{{ t('auth.username') }}</label>
           <input 
-            v-model="email" 
-            type="email" 
+            v-model="username" 
+            type="text" 
             required 
             class="w-full p-3 bg-white/5 border border-white/10 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-            placeholder="example@prism.io"
+            placeholder="username"
           />
         </div>
         <div>
