@@ -3,7 +3,7 @@ import api from '@/api/api';
 
 export interface User {
   id: string;
-  email: string;
+  username: string;
   role: 'guest' | 'user' | 'admin';
 }
 
@@ -11,6 +11,11 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   initialized: boolean;
+}
+
+export interface RegisterResponse {
+  user: User;
+  recoveryKey: string;
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -32,7 +37,7 @@ export const useAuthStore = defineStore('auth', {
         this.initialized = true;
       }
     },
-    async login(credentials: { email: string; password: string }) {
+    async login(credentials: { username: string; password: string }) {
       this.loading = true;
       try {
         const { data } = await api.post('/auth/login', credentials);
@@ -44,11 +49,12 @@ export const useAuthStore = defineStore('auth', {
         this.loading = false;
       }
     },
-    async register(data: any) {
+    async register(data: { username: string; password: string }): Promise<RegisterResponse> {
       this.loading = true;
       try {
         const { data: responseData } = await api.post('/auth/register', data);
         this.user = responseData.user;
+        return responseData;
       } catch (err) {
         this.user = null;
         throw err;
@@ -61,7 +67,7 @@ export const useAuthStore = defineStore('auth', {
         await api.post('/auth/logout');
       } finally {
         this.user = null;
-        this.initialized = true; // User is "logged out" but initialized
+        this.initialized = true;
       }
     }
   }

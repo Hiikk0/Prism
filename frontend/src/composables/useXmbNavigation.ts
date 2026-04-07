@@ -239,6 +239,49 @@ export function useXmbNavigation(
     }
   };
 
+  // Gamepad handling
+  let gamepadState = { lastButtons: new Array(16).fill(false) };
+  let rafId: number | null = null;
+
+  const pollGamepad = () => {
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[0];
+    if (gp) {
+      const { buttons } = gp;
+      const isPressed = (idx: number) => buttons[idx]?.pressed && !gamepadState.lastButtons[idx];
+      
+      if (isPressed(12)) moveUp();    // D-Pad Up
+      if (isPressed(13)) moveDown();  // D-Pad Down
+      if (isPressed(14)) moveLeft();  // D-Pad Left
+      if (isPressed(15)) moveRight(); // D-Pad Right
+      
+      if (isPressed(0)) selectFocused(); // Cross (X)
+      if (isPressed(1)) closeSubMenu();  // Circle (O)
+      
+      if (isPressed(4)) moveLeft();      // L1
+      if (isPressed(5)) moveRight();     // R1
+
+      // Triangle (3) and Square (2) can be handled by custom actions if needed
+      if (isPressed(3) && activeItem.value?.onTriangle) activeItem.value.onTriangle();
+      if (isPressed(2) && activeItem.value?.onSquare) activeItem.value.onSquare();
+      
+      gamepadState.lastButtons = buttons.map(b => b.pressed);
+    }
+    rafId = requestAnimationFrame(pollGamepad);
+  };
+
+  const startGamepadPolling = () => {
+    if (!rafId) pollGamepad();
+  };
+
+  const stopGamepadPolling = () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+  };
+
+  window.addEventListener('gamepadconnected', startGamepadPolling);
+  window.addEventListener('gamepaddisconnected', stopGamepadPolling);
+
   return {
     activeCatIndex,
     activeItemIndex,

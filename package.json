@@ -16,5 +16,11 @@
     "@playwright/test": "^1.59.1",
     "@types/node": "^25.5.0",
     "concurrently": "^9.2.1"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^10.3.0",
+    "pino-roll": "^4.0.0"
   }
 }

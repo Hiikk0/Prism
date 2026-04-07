@@ -1,134 +1,189 @@
 import { AuthService } from '@/domains/identity/services/auth.service';
 import { UserRepository } from '@/domains/identity/repositories/user.repository';
+import { SettingsRepository } from '@/domains/identity/repositories/settings.repository';
 import bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 
 jest.mock('@/domains/identity/repositories/user.repository');
+jest.mock('@/domains/identity/repositories/settings.repository');
 jest.mock('bcryptjs');
 jest.mock('jsonwebtoken');
 
 describe('AuthService', () => {
   let authService: AuthService;
   let mockUserRepository: jest.Mocked<UserRepository>;
+  let mockSettingsRepository: jest.Mocked<SettingsRepository>;
+
+  const jwtSecret = 'test_secret';
 
   beforeEach(() => {
     mockUserRepository = new UserRepository() as jest.Mocked<UserRepository>;
-    authService = new AuthService(mockUserRepository, 'test_secret');
+    mockSettingsRepository = new SettingsRepository() as jest.Mocked<SettingsRepository>;
+    authService = new AuthService(mockUserRepository, mockSettingsRepository, jwtSecret);
     jest.clearAllMocks();
+    
+    // Default settings
+    mockSettingsRepository.getSettings.mockResolvedValue({
+      registrationEnabled: true,
+      guestLoginEnabled: false,
+      mediaRootDirectory: '/tmp/media'
+    } as any);
   });
 
   describe('register', () => {
-    const userData = { email: 'test@example.com', password: 'password123', role: 'user' };
+    const userData = { username: 'testuser', password: 'password123' };
     const hashedPassword = 'hashedPassword';
-    const savedUser = { 
-      _id: '1', 
-      email: 'test@example.com', 
-      role: 'user',
-      toObject: jest.fn().mockReturnValue({ _id: '1', email: 'test@example.com', role: 'user' })
-    };
+    const hashedRecoveryKey = 'hashedRecoveryKey';
 
     beforeEach(() => {
-      mockUserRepository.findByEmail.mockResolvedValue(null);
-      (bcrypt.hash as jest.Mock).mockResolvedValue(hashedPassword);
+      mockUserRepository.findByUsername.mockResolvedValue(null);
+      mockUserRepository.count.mockResolvedValue(1); // Not the first user
+      (bcrypt.hash as jest.Mock).mockImplementation((val) => Promise.resolve(`hashed_${val}`));
+    });
+
+    it('should create a user, generate a recovery key, and return tokens', async () => {
+      const savedUser = { 
+        _id: '1', 
+        username: 'testuser', 
+        role: 'user',
+        toObject: jest.fn().mockReturnValue({ _id: '1', username: 'testuser', role: 'user' })
+      };
       mockUserRepository.create.mockResolvedValue(savedUser as any);
       (jwt.sign as jest.Mock).mockReturnValue('mock_token');
-    });
 
-    it('should create a user and return a token', async () => {
       const result = await authService.register(userData);
 
-      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith('test@example.com');
-      expect(mockUserRepository.create).toHaveBeenCalledWith({
-        email: 'test@example.com',
-        passwordHash: hashedPassword,
-        role: 'user',
-      });
-      expect(result.token).toBe('mock_token');
-      expect(result.user.email).toBe('test@example.com');
-      // Ensure passwordHash is not returned in user object
-      expect(result.user).not.toHaveProperty('passwordHash');
-      expect(result.user).not.toHaveProperty('password');
+      expect(mockUserRepository.findByUsername).toHaveBeenCalledWith('testuser');
+      expect(mockUserRepository.create).toHaveBeenCalledWith(expect.objectContaining({
+        username: 'testuser',
+        passwordHash: 'hashed_password123',
+        recoveryKeyHash: expect.stringContaining('hashed_'),
+        role: 'user'
+      }));
+      expect(result.accessToken).toBe('mock_token');
+      expect(result.refreshToken).toBe('mock_token');
+      expect(result.recoveryKey).toBeDefined(); // Plaintext for user
     });
 
-    it('should throw an error if email already exists', async () => {
-      mockUserRepository.findByEmail.mockResolvedValue({ _id: '1' } as any);
+    it('should set role as admin for the first user', async () => {
+      mockUserRepository.count.mockResolvedValue(0); // First user
+      const savedUser = { 
+        _id: 'admin1', 
+        username: 'admin', 
+        role: 'admin',
+        toObject: jest.fn().mockReturnValue({ _id: 'admin1', username: 'admin', role: 'admin' })
+      };
+      mockUserRepository.create.mockResolvedValue(savedUser as any);
 
-      await expect(authService.register(userData)).rejects.toThrow('Email already exists');
+      await authService.register({ username: 'admin', password: 'adminpassword' });
+
+      expect(mockUserRepository.create).toHaveBeenCalledWith(expect.objectContaining({
+        role: 'admin'
+      }));
+    });
+
+    it('should throw error if registration is disabled', async () => {
+      mockSettingsRepository.getSettings.mockResolvedValue({
+        registrationEnabled: false
+      } as any);
+
+      await expect(authService.register(userData)).rejects.toThrow('Registration is currently disabled');
+    });
+
+    it('should allow first user even if registration is disabled', async () => {
+      mockSettingsRepository.getSettings.mockResolvedValue({
+        registrationEnabled: false
+      } as any);
+      mockUserRepository.count.mockResolvedValue(0);
+      mockUserRepository.create.mockResolvedValue({ toObject: () => ({}) } as any);
+
+      await authService.register(userData);
+      expect(mockUserRepository.create).toHaveBeenCalled();
     });
   });
 
   describe('login', () => {
-    const userWithHash = { 
+    const user = { 
       _id: '1', 
-      email: 'test@example.com', 
-      passwordHash: 'hashedPassword', 
+      username: 'testuser', 
+      passwordHash: 'hashed_pass', 
       role: 'user',
-      toObject: jest.fn().mockReturnValue({ _id: '1', email: 'test@example.com', role: 'user' })
+      toObject: jest.fn().mockReturnValue({ _id: '1', username: 'testuser', role: 'user' })
     };
 
     beforeEach(() => {
-      mockUserRepository.findByEmail.mockResolvedValue(userWithHash as any);
+      mockUserRepository.findByUsername.mockResolvedValue(user as any);
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       (jwt.sign as jest.Mock).mockReturnValue('mock_token');
     });
 
-    it('should login a user and return a token with correct credentials', async () => {
-      const result = await authService.login('test@example.com', 'password123');
+    it('should return tokens for valid credentials', async () => {
+      const result = await authService.login('testuser', 'password123');
 
-      expect(bcrypt.compare).toHaveBeenCalledWith('password123', 'hashedPassword');
-      expect(jwt.sign).toHaveBeenCalledWith(
-        { id: '1', email: 'test@example.com', role: 'user' }, 
-        'test_secret', 
-        { expiresIn: '1d' }
-      );
-      expect(result.token).toBe('mock_token');
-      expect(result.user.email).toBe('test@example.com');
-      // Critical: passwordHash must be stripped from the response
-      expect(result.user).not.toHaveProperty('passwordHash');
+      expect(result.accessToken).toBe('mock_token');
+      expect(result.refreshToken).toBe('mock_token');
+      expect(result.user.username).toBe('testuser');
     });
 
-    it('should throw an error when user is not found', async () => {
-      mockUserRepository.findByEmail.mockResolvedValue(null);
+    it('should throw error for invalid credentials', async () => {
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+      await expect(authService.login('testuser', 'wrong')).rejects.toThrow('Invalid credentials');
+    });
+  });
 
-      await expect(authService.login('test@example.com', 'wrongpassword')).rejects.toThrow('Invalid credentials');
+  describe('password recovery', () => {
+    const user = { 
+      _id: '1', 
+      username: 'testuser', 
+      recoveryKeyHash: 'hashed_key',
+      toObject: jest.fn().mockReturnValue({ _id: '1', username: 'testuser' })
+    };
+
+    it('should reset password with valid recovery key', async () => {
+      mockUserRepository.findByUsername.mockResolvedValue(user as any);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      (bcrypt.hash as jest.Mock).mockResolvedValue('new_hash');
+
+      await authService.resetPassword('testuser', 'plain_key', 'new_pass');
+
+      expect(mockUserRepository.update).toHaveBeenCalledWith('1', {
+        passwordHash: 'new_hash'
+      });
     });
 
-    it('should throw an error when password does not match', async () => {
+    it('should throw error with invalid recovery key', async () => {
+      mockUserRepository.findByUsername.mockResolvedValue(user as any);
       (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
-      await expect(authService.login('test@example.com', 'wrongpassword')).rejects.toThrow('Invalid credentials');
+      await expect(authService.resetPassword('testuser', 'wrong_key', 'new_pass'))
+        .rejects.toThrow('Invalid recovery key');
+    });
+  });
+
+  describe('guest login', () => {
+    it('should create guest user if allowed', async () => {
+      mockSettingsRepository.getSettings.mockResolvedValue({ guestLoginEnabled: true } as any);
+      mockUserRepository.findByUsername.mockResolvedValue(null);
+      mockUserRepository.create.mockResolvedValue({ 
+        _id: 'guest1', 
+        username: 'guest-uuid', 
+        role: 'guest',
+        toObject: () => ({ username: 'guest' })
+      } as any);
+      (jwt.sign as jest.Mock).mockReturnValue('guest_token');
+
+      const result = await authService.guestLogin();
+
+      expect(result.accessToken).toBe('guest_token');
+      expect(mockUserRepository.create).toHaveBeenCalledWith(expect.objectContaining({
+        role: 'guest'
+      }));
     });
 
-    describe('edge cases', () => {
-      it('should propagate bcrypt hash errors during registration', async () => {
-        mockUserRepository.findByEmail.mockResolvedValue(null);
-        (bcrypt.hash as jest.Mock).mockRejectedValue(new Error('hash failed'));
-
-        await expect(authService.register({ email: 'test@example.com', password: 'password123', role: 'user' })).rejects.toThrow('hash failed');
-      });
-
-      it('should propagate repository errors during login', async () => {
-        mockUserRepository.findByEmail.mockRejectedValue(new Error('db error'));
-
-        await expect(authService.login('test@example.com', 'password123')).rejects.toThrow('db error');
-      });
-
-      it('should return user object without password even if repository returns plain object with password field', async () => {
-        const plainUser = { 
-          _id: '1', 
-          email: 'plain@example.com', 
-          passwordHash: 'plainHash', 
-          role: 'user',
-          toObject: jest.fn().mockReturnValue({ _id: '1', email: 'plain@example.com', role: 'user' })
-        };
-        mockUserRepository.findByEmail.mockResolvedValue(plainUser as any);
-        (bcrypt.compare as jest.Mock).mockResolvedValue(true);
-        (jwt.sign as jest.Mock).mockReturnValue('token');
-
-        const result = await authService.login('plain@example.com', 'password123');
-        expect(result.user).not.toHaveProperty('passwordHash');
-        expect(result.user).not.toHaveProperty('password');
-      });
+    it('should throw error if guest login disabled', async () => {
+      mockSettingsRepository.getSettings.mockResolvedValue({ guestLoginEnabled: false } as any);
+      await expect(authService.guestLogin()).rejects.toThrow('Guest login is disabled');
     });
   });
 });

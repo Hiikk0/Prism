@@ -2,6 +2,7 @@
 import { toRef, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useXmbNavigation, type XmbCategory } from '@/composables/useXmbNavigation';
 import XmbHints from './XmbHints.vue';
+import XmbMarquee from './XmbMarquee.vue';
 
 const props = defineProps<{
   categories: XmbCategory[];
@@ -46,6 +47,10 @@ const {
 
 const editValue = ref('');
 const inputRef = ref<HTMLInputElement | null>(null);
+
+const setInputRef = (el: any) => {
+  if (el) inputRef.value = el as HTMLInputElement;
+};
 
 watch(isEditing, (newVal) => {
   if (newVal && activeSubItem.value) {
@@ -249,27 +254,36 @@ defineExpose({
                   }"
                   @click.stop="setSubItem(sIdx); selectFocused()"
                 >
-                  <span class="text-xl font-light tracking-wide transition-all duration-300 whitespace-nowrap overflow-hidden text-ellipsis mr-4 flex-1 text-left" :class="sIdx === activeSubItemIndex ? 'translate-x-2' : ''">
+                  <XmbMarquee 
+                    :active="sIdx === activeSubItemIndex"
+                    class="text-xl font-light tracking-wide transition-all duration-300 mr-4 flex-1 text-left" 
+                  >
                     {{ sub.label() }}
-                  </span>
+                  </XmbMarquee>
                   
-                  <span v-if="sub.value" class="text-sm font-bold uppercase tracking-widest opacity-60 shrink-0 max-w-[240px] w-full text-right flex justify-end">
+                  <span v-if="sub.value" class="text-sm font-bold uppercase tracking-widest opacity-60 shrink-0 max-w-[240px] flex-1 flex justify-end text-right">
                     <template v-if="isEditing && sIdx === activeSubItemIndex && (sub.type === 'text' || sub.type === 'password')">
                       <input 
-                        ref="inputRef"
+                        :ref="setInputRef"
                         v-model="editValue"
                         :type="sub.type"
                         class="bg-white/10 border-b border-white/30 outline-none px-2 py-0.5 text-white w-full text-right font-medium pointer-events-auto"
                         @keydown.enter.stop="handleEditSubmit"
                         @keydown.esc.stop="handleEditCancel"
-                        @blur="handleEditCancel"
+                        @blur="handleEditSubmit"
                         @click.stop
                       />
                     </template>
                     <template v-else>
-                      <span class="pointer-events-none">
-                        {{ sub.type === 'password' && sub.value() ? '********' : sub.value() }}
-                      </span>
+                        <XmbMarquee
+                          :active="sIdx === activeSubItemIndex"
+                          class="pointer-events-none w-full"
+                          align="right"
+                        >
+                          <span class="w-full text-right">
+                            {{ sub.type === 'password' && sub.value() ? '********' : sub.value() }}
+                          </span>
+                        </XmbMarquee>
                     </template>
                   </span>
                 </div>

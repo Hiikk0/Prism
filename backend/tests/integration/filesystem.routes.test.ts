@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 
 describe('FileSystem Routes', () => {
-  const testUser = { email: 'user@example.com', password: 'password123' };
+  const testUser = { username: 'user@example.com', password: 'password123' };
   let userCookie: string;
   let userId: string;
 
@@ -133,7 +133,7 @@ describe('FileSystem Routes', () => {
     });
 
     it('should refuse to rename if not owner', async () => {
-      const otherUserRes = await supertest(app.server).post('/api/auth/register').send({ email: 'other_rename@ex.com', password: 'password' });
+      const otherUserRes = await supertest(app.server).post('/api/auth/register').send({ username: 'other_rename@ex.com', password: 'password' });
       const otherCookie = otherUserRes.headers['set-cookie'][0];
 
       const mediaFile = await MediaFileModel.create({
@@ -168,8 +168,9 @@ describe('FileSystem Routes', () => {
       await fs.writeFile(filePath, 'some content');
 
       const response = await supertest(app.server)
-        .delete(`/api/files/${mediaFile._id}`)
-        .set('Cookie', [userCookie]);
+        .delete(`/api/files`)
+        .set('Cookie', [userCookie])
+        .send({ ids: [mediaFile._id] });
 
       expect(response.status).toBe(204);
       await expect(fs.access(filePath)).rejects.toThrow();
@@ -178,7 +179,7 @@ describe('FileSystem Routes', () => {
     });
 
     it('should refuse to delete if not owner', async () => {
-      const otherUserRes = await supertest(app.server).post('/api/auth/register').send({ email: 'other@ex.com', password: 'password' });
+      const otherUserRes = await supertest(app.server).post('/api/auth/register').send({ username: 'other@ex.com', password: 'password' });
       const otherCookie = otherUserRes.headers['set-cookie'][0];
 
       const mediaFile = await MediaFileModel.create({
@@ -191,10 +192,13 @@ describe('FileSystem Routes', () => {
       });
 
       const response = await supertest(app.server)
-        .delete(`/api/files/${mediaFile._id}`)
-        .set('Cookie', [otherCookie]);
+        .delete(`/api/files`)
+        .set('Cookie', [otherCookie])
+        .send({ ids: [mediaFile._id] });
 
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(204);
+      const fileInDb = await MediaFileModel.findById(mediaFile._id);
+      expect(fileInDb).not.toBeNull();
     });
   });
 });

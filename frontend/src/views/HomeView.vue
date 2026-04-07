@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import XmbContainer from '@/components/xmb/XmbContainer.vue';
 import type { XmbItem } from '@/composables/useXmbNavigation';
 import { useAuthStore } from '@/stores/auth';
@@ -27,27 +27,33 @@ const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const router = useRouter();
 
+onMounted(async () => {
+  if (authStore.user?.role === 'admin') {
+    await settingsStore.fetchSystemSettings();
+  }
+});
+
 const categories = [
   { id: 'user', icon: UserIcon, label: 'Profile' },
   { id: 'settings', icon: SettingsIcon, label: 'Settings' },
-  { id: 'video', icon: Video, label: 'Videos' },
-  { id: 'music', icon: Music, label: 'Music' },
-  { id: 'image', icon: ImageIcon, label: 'Photos' },
+  { id: 'file-manager', icon: Folder, label: 'File Manager' },
 ];
 
 const activeCategoryIndex = ref(2); // Default to Video
 
 // Map basic categories to full XMB Category structure
 const xmbCategories = computed(() => categories.map(cat => {
-  let items: any[] = [];
+  let items: XmbItem[] = [];
   
-  if (['video', 'music', 'image'].includes(cat.id)) {
+  if (cat.id === 'file-manager') {
     items = [
-      { id: `${cat.id}-all`, label: () => t('files.browse_all'), icon: Folder, type: cat.id },
-      { id: `${cat.id}-recent`, label: () => t('files.recent'), icon: Folder, type: cat.id }
+      { id: 'fm-all', label: () => t('files.all') || 'All', icon: Folder, type: 'all' },
+      { id: 'fm-video', label: () => t('categories.video') || 'Videos', icon: Video, type: 'video' },
+      { id: 'fm-music', label: () => t('categories.music') || 'Music', icon: Music, type: 'audio' },
+      { id: 'fm-photo', label: () => t('categories.image') || 'Photos', icon: ImageIcon, type: 'image' },
     ];
   } else if (cat.id === 'user') {
-    items = [
+    const baseItems: XmbItem[] = [
       {
         id: 'user-profile',
         label: () => t('profile.view') || 'View Profile',
@@ -56,7 +62,7 @@ const xmbCategories = computed(() => categories.map(cat => {
           {
             id: 'profile-name',
             label: () => t('auth.username') || 'Username',
-            value: () => authStore.user?.email || 'Guest',
+            value: () => authStore.user?.role === 'guest' ? (t('auth.guest') || 'Guest') : (authStore.user?.username || 'Guest'),
             onSelect: () => {}
           },
           {
@@ -66,28 +72,36 @@ const xmbCategories = computed(() => categories.map(cat => {
             onSelect: () => {}
           }
         ]
-      },
-      {
-        id: 'user-change-name',
-        label: () => t('profile.change_username') || 'Change Username',
-        icon: Type,
-        onSelect: () => { alert('Not implemented: Change Username'); }
-      },
-      {
-        id: 'user-change-pass',
-        label: () => t('profile.change_password') || 'Change Password',
-        icon: Key,
-        onSelect: () => { alert('Not implemented: Change Password'); }
-      },
-      {
-        id: 'user-logout',
-        label: () => t('auth.logout') || 'Logout',
-        icon: LogOut,
-        onSelect: () => handleLogout()
       }
     ];
+
+    if (authStore.user?.role !== 'guest') {
+      baseItems.push(
+        {
+          id: 'user-change-name',
+          label: () => t('profile.change_username') || 'Change Username',
+          icon: Type,
+          onSelect: () => { alert('Not implemented: Change Username'); }
+        },
+        {
+          id: 'user-change-pass',
+          label: () => t('profile.change_password') || 'Change Password',
+          icon: Key,
+          onSelect: () => { alert('Not implemented: Change Password'); }
+        }
+      );
+    }
+
+    baseItems.push({
+      id: 'user-logout',
+      label: () => t('auth.logout') || 'Logout',
+      icon: LogOut,
+      onSelect: () => handleLogout()
+    });
+
+    items = baseItems;
   } else if (cat.id === 'settings') {
-    items = [
+    const baseSettings: XmbItem[] = [
       {
         id: 'settings-lang',
         label: () => t('settings.language') || 'Language',
@@ -98,8 +112,11 @@ const xmbCategories = computed(() => categories.map(cat => {
           value: () => settingsStore.language === lang.id ? '✓' : '',
           onSelect: () => { settingsStore.language = lang.id }
         }))
-      },
-      {
+      }
+    ];
+
+    if (authStore.user?.role === 'admin') {
+      baseSettings.push({
         id: 'settings-general',
         label: () => t('settings.general') || 'General Settings',
         icon: Monitor,
@@ -108,19 +125,26 @@ const xmbCategories = computed(() => categories.map(cat => {
             id: 'gen-path',
             label: () => 'Media Path',
             value: () => settingsStore.mediaPath,
-            onSelect: () => { 
+            onSelect: async () => { 
+              if (authStore.user?.role !== 'admin') return;
               const newPath = prompt('Enter new media path:', settingsStore.mediaPath);
-              if (newPath) settingsStore.mediaPath = newPath;
+              if (newPath) await settingsStore.updateSystemSettings({ mediaRootDirectory: newPath });
             }
           },
           {
             id: 'gen-guest',
             label: () => 'Guest Account',
             value: () => settingsStore.guestAccountEnabled ? 'ON' : 'OFF',
-            onSelect: () => { settingsStore.guestAccountEnabled = !settingsStore.guestAccountEnabled }
+            onSelect: async () => { 
+              if (authStore.user?.role !== 'admin') return;
+              await settingsStore.updateSystemSettings({ guestLoginEnabled: !settingsStore.guestAccountEnabled });
+            }
           }
         ]
-      },
+      });
+    }
+
+    baseSettings.push(
       {
         id: 'settings-themes',
         label: () => t('settings.themes') || 'Themes',
@@ -152,7 +176,9 @@ const xmbCategories = computed(() => categories.map(cat => {
           }
         ]
       }
-    ];
+    );
+
+    items = baseSettings;
   }
 
   return {
