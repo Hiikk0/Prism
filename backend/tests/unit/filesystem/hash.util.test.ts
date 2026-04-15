@@ -1,6 +1,24 @@
 import { generateFastHash } from '@/domains/filesystem/utils/hash.util';
 import path from 'path';
 import fs from 'fs/promises';
+import { loadEsm } from 'load-esm';
+import crypto from 'crypto';
+
+jest.mock('load-esm');
+
+(loadEsm as jest.Mock).mockImplementation(async (pkg) => {
+  if (pkg === 'xxhash-wasm') {
+    return {
+      default: async () => ({
+        h64Raw: (input: Uint8Array) => {
+          const hash = crypto.createHash('sha256').update(input).digest('hex').substring(0, 15);
+          return BigInt('0x' + hash);
+        }
+      })
+    };
+  }
+  return {};
+});
 
 describe('Fast Chunk Hashing Utility', () => {
   const TEST_DIR = path.join(__dirname, 'hash_test_temp');

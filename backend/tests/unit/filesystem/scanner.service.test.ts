@@ -47,6 +47,8 @@ describe('ScannerService', () => {
         });
 
         scannerService = new ScannerService(mockRepo, mockProcessor, MEDIA_ROOT, mockSettingsRepo, SYSTEM_USER_ID);
+        mockRepo.findAllPaths.mockResolvedValue(new Map());
+        (fs.readdir as jest.Mock).mockResolvedValue([]);
         jest.clearAllMocks();
     });
 

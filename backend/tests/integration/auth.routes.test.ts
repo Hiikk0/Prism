@@ -188,7 +188,7 @@ describe('Auth Routes & Middleware', () => {
         .set('Cookie', [cookie]);
 
       expect(response.status).toBe(403);
-      expect(response.body.error).toBe('Forbidden: Insufficient permissions');
+      expect(response.body.error).toBe('Forbidden');
     });
 
     it('should allow access (200) when user has admin role', async () => {
@@ -213,7 +213,7 @@ describe('Auth Routes & Middleware', () => {
       const response = await supertest(app.server).get('/api/admin/settings');
 
       expect(response.status).toBe(401);
-      expect(response.body.error).toBe('Unauthorized: No token provided');
+      expect(response.body.error).toBe('Unauthorized');
     });
 
     it('should return 401 when an invalid token cookie is provided', async () => {
@@ -222,7 +222,7 @@ describe('Auth Routes & Middleware', () => {
         .set('Cookie', ['token=invalid-token']);
 
       expect(response.status).toBe(401);
-      expect(response.body.error).toBe('Unauthorized: Invalid token');
+      expect(response.body.error).toBe('Unauthorized');
     });
   });
 });

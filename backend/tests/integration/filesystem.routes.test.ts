@@ -10,6 +10,12 @@ const MEDIA_ROOT = path.join(__dirname, '../../tmp_media');
 process.env.MEDIA_ROOT_DIRECTORY = MEDIA_ROOT;
 const app = buildApp();
 
+const mockScanner = {
+  unwatch: jest.fn().mockResolvedValue(undefined),
+  watch: jest.fn().mockResolvedValue(undefined)
+};
+(app as any).decorate('scanner', mockScanner);
+
 beforeAll(async () => {
   await app.ready();
   if (mongoose.connection.readyState === 0) {
@@ -30,7 +36,7 @@ beforeEach(async () => {
   await MediaFileModel.deleteMany({});
   const files = await fs.readdir(MEDIA_ROOT);
   for (const file of files) {
-    await fs.unlink(path.join(MEDIA_ROOT, file));
+    await fs.rm(path.join(MEDIA_ROOT, file), { recursive: true, force: true });
   }
 });
 
@@ -89,8 +95,8 @@ describe('FileSystem Routes', () => {
         .set('Cookie', [userCookie]);
 
       expect(response.status).toBe(200);
-      expect(response.body.length).toBe(1);
-      expect(response.body[0].originalName).toBe('test.mp4');
+      expect(response.body.items.length).toBe(1);
+      expect(response.body.items[0].originalName).toBe('test.mp4');
     });
 
     it('should filter files by type', async () => {
@@ -104,8 +110,8 @@ describe('FileSystem Routes', () => {
         .set('Cookie', [userCookie]);
 
       expect(response.status).toBe(200);
-      expect(response.body.length).toBe(1);
-      expect(response.body[0].originalName).toBe('movie.mp4');
+      expect(response.body.items.length).toBe(1);
+      expect(response.body.items[0].originalName).toBe('movie.mp4');
     });
   });
 
@@ -119,6 +125,7 @@ describe('FileSystem Routes', () => {
         size: 100,
         uploadedBy: new mongoose.Types.ObjectId(userId)
       });
+      await fs.writeFile(path.join(MEDIA_ROOT, 'saved.mp4'), 'fake video content');
 
       const response = await supertest(app.server)
         .put(`/api/files/${mediaFile._id}`)

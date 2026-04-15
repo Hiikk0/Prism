@@ -38,7 +38,7 @@ describe('AuthService', () => {
 
     beforeEach(() => {
       mockUserRepository.findByUsername.mockResolvedValue(null);
-      mockUserRepository.count.mockResolvedValue(1); // Not the first user
+      mockUserRepository.countDocuments.mockResolvedValue(1); // Not the first user
       (bcrypt.hash as jest.Mock).mockImplementation((val) => Promise.resolve(`hashed_${val}`));
     });
 
@@ -67,7 +67,7 @@ describe('AuthService', () => {
     });
 
     it('should set role as admin for the first user', async () => {
-      mockUserRepository.count.mockResolvedValue(0); // First user
+      mockUserRepository.countDocuments.mockResolvedValue(0); // First user
       const savedUser = { 
         _id: 'admin1', 
         username: 'admin', 
@@ -95,8 +95,13 @@ describe('AuthService', () => {
       mockSettingsRepository.getSettings.mockResolvedValue({
         registrationEnabled: false
       } as any);
-      mockUserRepository.count.mockResolvedValue(0);
-      mockUserRepository.create.mockResolvedValue({ toObject: () => ({}) } as any);
+      mockUserRepository.countDocuments.mockResolvedValue(0);
+      mockUserRepository.create.mockResolvedValue({ 
+        _id: '1', 
+        username: 'test', 
+        role: 'admin', 
+        toObject: () => ({}) 
+      } as any);
 
       await authService.register(userData);
       expect(mockUserRepository.create).toHaveBeenCalled();
