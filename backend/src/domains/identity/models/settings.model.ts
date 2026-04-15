@@ -6,6 +6,8 @@ export interface ISettings extends Document {
   mediaRootDirectory: string;
   usePolling: boolean;
   pollingInterval: number;
+  scannerConcurrency: number;
+  scannerIoConcurrency: number;
   updatedAt: Date;
 }
 
@@ -15,6 +17,8 @@ const SettingsSchema: Schema = new Schema({
   mediaRootDirectory: { type: String, required: true },
   usePolling: { type: Boolean, default: false },
   pollingInterval: { type: Number, default: 100 },
+  scannerConcurrency: { type: Number, default: 2 },
+  scannerIoConcurrency: { type: Number, default: 10 },
   updatedAt: { type: Date, default: Date.now }
 });
 

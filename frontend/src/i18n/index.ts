@@ -51,7 +51,8 @@ const messages = {
       rename_item: 'Enter new name:',
       scan_directory: 'Scan Directory',
       scanning: 'Scanning...',
-      manage_tags: 'Manage Tags'
+      manage_tags: 'Manage Tags',
+      no_folders: 'No subdirectories here'
     },
     settings: {
       language: 'Language',
@@ -123,7 +124,8 @@ const messages = {
       rename_item: 'Введіть нову назву:',
       scan_directory: 'Сканувати директорію',
       scanning: 'Сканування...',
-      manage_tags: 'Керувати тегами'
+      manage_tags: 'Керувати тегами',
+      no_folders: 'Тут немає підкаталогів'
     },
     settings: {
       language: 'Мова',

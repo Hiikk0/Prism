@@ -9,6 +9,10 @@ export class UserRepository {
     return UserModel.findById(id).exec();
   }
 
+  async countDocuments(filter: any = {}): Promise<number> {
+    return UserModel.countDocuments(filter).exec();
+  }
+
   async count(): Promise<number> {
     return UserModel.countDocuments().exec();
   }
@@ -19,7 +23,7 @@ export class UserRepository {
   }
 
   async update(id: string, data: any): Promise<IUser | null> {
-    return UserModel.findByIdAndUpdate(id, data, { new: true }).exec();
+    return UserModel.findByIdAndUpdate(id, data, { returnDocument: 'after' }).exec();
   }
 
   async delete(id: string): Promise<any> {

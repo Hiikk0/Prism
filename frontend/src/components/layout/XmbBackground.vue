@@ -1,16 +1,27 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { useAuthStore } from '@/stores/auth';
 
+const authStore = useAuthStore();
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let animationId: number;
 let startTime: number;
 
+const prefs = computed(() => authStore.user?.preferences || {
+  backgroundType: 'waves' as const,
+  performanceMode: 'high' as const,
+  backgroundMediaId: ''
+});
+
+const isWaves = computed(() => prefs.value.backgroundType === 'waves');
+const isLowPerf = computed(() => prefs.value.performanceMode === 'low');
+
 // Animation state
-const STAGE_DELAY = 5000; // 5 seconds
-const TRANSITION_DURATION = 5000; // 5 seconds smooth transition
-const LINE_COUNT = 40;
-const SPLIT_X_PERCENT = 0.45; // Burst point at 45% of width
+const STAGE_DELAY = 5000;
+const TRANSITION_DURATION = 5000;
+const LINE_COUNT = computed(() => isLowPerf.value ? 12 : 40);
+const SPLIT_X_PERCENT = 0.45;
 
 interface Line {
   frequency: number;
@@ -22,19 +33,20 @@ interface Line {
   width: number;
 }
 
-const lines: Line[] = [];
+const lines = ref<Line[]>([]);
 
-// Initialize bundle lines
 const initLines = () => {
-  for (let i = 0; i < LINE_COUNT; i++) {
-    lines.push({
+  lines.value = [];
+  const count = LINE_COUNT.value;
+  for (let i = 0; i < count; i++) {
+    lines.value.push({
       frequency: 0.005 + Math.random() * 0.015,
       phase: Math.random() * Math.PI * 2,
       phaseSpeed: 0.02 + Math.random() * 0.05,
       amplitudeFactor: 20 + Math.random() * 80,
       hue: Math.random() * 360,
       hueSpeed: 0.1 + Math.random() * 0.5,
-      width: 0.8 + Math.random() * 1.2 // Strictly 1-2px
+      width: 0.8 + Math.random() * 1.2
     });
   }
 };
@@ -49,12 +61,15 @@ const resize = () => {
 };
 
 const animate = (time: number) => {
-  if (!ctx || !canvasRef.value) return;
+  // Optimization: Don't animate if waves are disabled OR tab is hidden
+  if (!isWaves.value || document.hidden || !ctx || !canvasRef.value) {
+    animationId = requestAnimationFrame(animate);
+    return;
+  }
 
   if (!startTime) startTime = time;
   const elapsed = time - startTime;
   
-  // Transition Progress (0 to 1) over TRANSITION_DURATION after STAGE_DELAY
   const progress = Math.min(1, Math.max(0, (elapsed - STAGE_DELAY) / TRANSITION_DURATION));
   const isStarted = elapsed > STAGE_DELAY;
 
@@ -63,25 +78,31 @@ const animate = (time: number) => {
   const centerY = height / 2;
   const splitX = width * SPLIT_X_PERCENT;
 
-  // Clear canvas
   ctx.clearRect(0, 0, width, height);
 
-  // 1. Draw the Pulsating Base Line (Main Path)
-  const pulse = (Math.sin(time * 0.002) + 1) / 2; // 0 to 1
-  const baseWidth = 8 + pulse * 4; // ~10px total
+  // 1. Draw Base Line
+  const pulse = (Math.sin(time * 0.002) + 1) / 2;
+  const baseWidth = 8 + pulse * 4;
   const baseAlpha = 0.6 + pulse * 0.4;
   
-  // Left Segment (Constant)
   ctx.beginPath();
   ctx.moveTo(0, centerY);
   ctx.lineTo(splitX, centerY);
   ctx.strokeStyle = `rgba(255, 255, 255, ${baseAlpha})`;
   ctx.lineWidth = baseWidth;
-  ctx.shadowBlur = isStarted ? 20 * progress : 15;
-  ctx.shadowColor = 'rgba(255, 255, 255, 0.4)';
+  
+  // Optimization: Shadow is expensive, only apply it in high performance mode 
+  // or use a simpler version
+  if (!isLowPerf.value) {
+    ctx.shadowBlur = isStarted ? 20 * progress : 15;
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.4)';
+  }
+  
   ctx.stroke();
+  if (!isLowPerf.value) {
+    ctx.shadowBlur = 0; // Reset for subsequent drawing
+  }
 
-  // Right Segment (Fades out after 5s)
   if (progress < 1) {
     ctx.beginPath();
     ctx.moveTo(splitX, centerY);
@@ -91,33 +112,31 @@ const animate = (time: number) => {
     ctx.stroke();
   }
 
-  // 2. Draw the Sinusoidal Bundle (Fades in and curves out)
+  // 2. Draw Bundle
   if (isStarted) {
-    lines.forEach((line) => {
+    lines.value.forEach((line) => {
       if (!ctx) return;
-      line.phase -= line.phaseSpeed; // Inverted: flows away from center (right)
+      line.phase -= line.phaseSpeed;
       line.hue = (line.hue + line.hueSpeed) % 360;
 
       ctx.beginPath();
       ctx.lineWidth = line.width;
-      // Fade in alpha over transition
       const waveAlpha = progress * 0.65;
       ctx.strokeStyle = `hsla(${line.hue}, 80%, 75%, ${waveAlpha})`;
       
       ctx.moveTo(splitX, centerY);
       
-      for (let x = splitX; x < width; x += 5) {
-        // Amplitude is multiplied by progress to ensure lines start flat and curve away
+      const step = isLowPerf.value ? 10 : 5; // Optimization: Fewer segments in low perf
+      for (let x = splitX; x < width; x += step) {
         const dist = (x - splitX) / (width - splitX);
         const amplitude = dist * line.amplitudeFactor * progress;
         const y = centerY + Math.sin(x * line.frequency + line.phase) * amplitude;
         ctx.lineTo(x, y);
       }
-      
       ctx.stroke();
     });
 
-    // 3. Glowing Core at the split point (Fades in)
+    // 3. Glowing Core
     const glowRadius = 30 * progress;
     if (glowRadius > 0) {
       const gradient = ctx.createRadialGradient(splitX, centerY, 0, splitX, centerY, glowRadius);
@@ -134,6 +153,8 @@ const animate = (time: number) => {
   animationId = requestAnimationFrame(animate);
 };
 
+watch(LINE_COUNT, () => initLines());
+
 onMounted(() => {
   ctx = canvasRef.value?.getContext('2d') || null;
   initLines();
@@ -149,14 +170,37 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <canvas 
-    ref="canvasRef" 
-    class="fixed inset-0 w-full h-full pointer-events-none -z-40"
-  ></canvas>
+  <div class="fixed inset-0 -z-40 pointer-events-none bg-black overflow-hidden">
+    <!-- Image Background -->
+    <div 
+      v-if="prefs.backgroundType === 'image'" 
+      class="absolute inset-0 bg-cover bg-center transition-opacity duration-1000"
+      :style="{ backgroundImage: `url(${prefs.backgroundMediaId})` }"
+    ></div>
+
+    <!-- Video Background -->
+    <video
+      v-if="prefs.backgroundType === 'video'"
+      class="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000"
+      autoplay
+      loop
+      muted
+      playsinline
+      :src="prefs.backgroundMediaId"
+    ></video>
+
+    <!-- Waves Canvas -->
+    <canvas 
+      v-show="isWaves"
+      ref="canvasRef" 
+      class="w-full h-full opacity-60"
+    ></canvas>
+
+    <!-- Base Overlay for Depth -->
+    <div class="absolute inset-0 bg-linear-to-b from-black/20 via-transparent to-black/40"></div>
+  </div>
 </template>
 
 <style scoped>
-canvas {
-  filter: blur(0.5px); /* Subtle smoothing */
-}
+/* Removed expensive blur filter */
 </style>

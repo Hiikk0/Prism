@@ -5,6 +5,11 @@ export interface User {
   id: string;
   username: string;
   role: 'guest' | 'user' | 'admin';
+  preferences?: {
+    backgroundType: 'waves' | 'image' | 'video' | 'none';
+    backgroundMediaId?: string;
+    performanceMode: 'high' | 'low';
+  };
 }
 
 interface AuthState {
@@ -68,6 +73,17 @@ export const useAuthStore = defineStore('auth', {
       } finally {
         this.user = null;
         this.initialized = true;
+      }
+    },
+    async updateProfile(updates: Partial<User>) {
+      try {
+        const { data } = await api.patch('/auth/profile', updates);
+        if (this.user) {
+          this.user = { ...this.user, ...data.user };
+        }
+      } catch (err) {
+        console.error('Failed to update profile:', err);
+        throw err;
       }
     }
   }

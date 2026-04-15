@@ -17,7 +17,7 @@ const handleLogin = async () => {
   loading.value = true;
   error.value = '';
   try {
-    await authStore.login({ email: username.value, password: password.value });
+    await authStore.login({ username: username.value, password: password.value });
     router.push({ name: 'home' });
   } catch (err: any) {
     error.value = err.response?.data?.error || t('auth.error_generic');

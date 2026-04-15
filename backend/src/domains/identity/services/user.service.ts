@@ -17,7 +17,7 @@ export class UserService {
     return this.userRepository.update(userId, { role });
   }
 
-  async updateProfile(userId: string, data: { username?: string, password?: string }): Promise<IUser | null> {
+  async updateProfile(userId: string, data: { username?: string, password?: string, preferences?: any }): Promise<IUser | null> {
     const updateData: any = {};
     if (data.username) {
       const existing = await this.userRepository.findByUsername(data.username);
@@ -28,6 +28,14 @@ export class UserService {
     }
     if (data.password) {
       updateData.passwordHash = await bcrypt.hash(data.password, 10);
+    }
+    if (data.preferences) {
+      // Get current user to merge preferences
+      const user = await this.userRepository.findById(userId);
+      updateData.preferences = {
+        ...(user?.preferences || {}),
+        ...data.preferences
+      };
     }
     return this.userRepository.update(userId, updateData);
   }

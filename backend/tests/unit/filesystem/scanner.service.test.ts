@@ -67,7 +67,7 @@ describe('ScannerService', () => {
         (fs.stat as jest.Mock).mockResolvedValue({ isDirectory: () => false, size: 1024 });
         (generateFastHash as jest.Mock).mockResolvedValue('hash123');
 
-        mockRepo.findAll.mockResolvedValue([]); // No duplicates
+        mockRepo.findAll.mockResolvedValue({ items: [], total: 0 }); // No duplicates
         mockRepo.create.mockResolvedValue({ _id: 'file123' } as any);
 
         await addHandler(testPath);

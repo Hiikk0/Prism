@@ -12,6 +12,7 @@ export interface IMediaFile extends Document {
   tags?: string[];
   hash?: string;
   metadata?: any;
+  modifiedAt?: Date;
   createdAt: Date;
 }
 
@@ -27,7 +28,11 @@ const MediaFileSchema: Schema = new Schema({
   tags: { type: [String], default: [] },
   hash: { type: String, required: false },
   metadata: { type: Schema.Types.Mixed, required: false },
+  modifiedAt: { type: Date, required: false },
   createdAt: { type: Date, default: Date.now }
 });
+
+MediaFileSchema.index({ path: 1 }, { unique: true });
+MediaFileSchema.index({ hash: 1 });
 
 export const MediaFileModel = mongoose.model<IMediaFile>('MediaFile', MediaFileSchema);

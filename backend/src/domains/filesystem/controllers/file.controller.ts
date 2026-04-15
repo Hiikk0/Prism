@@ -6,8 +6,15 @@ export class FileController {
   constructor(private fileService: FileService) {}
 
   async getFiles(request: FastifyRequest, reply: FastifyReply) {
-    const { type, parentId, isFolder, search } = request.query as any;
-    const files = await this.fileService.getFiles({ type, parentId, isFolder, search });
+    const { type, parentId, isFolder, search, skip, limit } = request.query as any;
+    const files = await this.fileService.getFiles({ 
+      type, 
+      parentId, 
+      isFolder: isFolder === 'true' ? true : (isFolder === 'false' ? false : undefined), 
+      search,
+      skip: skip !== undefined ? parseInt(skip) : undefined,
+      limit: limit !== undefined ? parseInt(limit) : undefined
+    });
     return reply.send(files);
   }
 
@@ -49,9 +56,10 @@ export class FileController {
       const result = await this.fileService.renameFile(id, originalName, user);
       return reply.send(result);
     } catch (err: any) {
-      if (err.message === 'File not found') return reply.status(404).send({ error: err.message });
-      if (err.message.includes('Forbidden')) return reply.status(403).send({ error: err.message });
-      return reply.status(500).send({ error: 'Internal Server Error' });
+      console.error('Rename error:', err);
+      if (err.message === 'File not found') return reply.status(404).send({ error: 'File not found' });
+      if (err.message.includes('Forbidden')) return reply.status(403).send({ error: 'Forbidden' });
+      return reply.status(500).send({ error: `Internal Server Error: ${err.message}` });
     }
   }
 
@@ -62,7 +70,9 @@ export class FileController {
       await this.fileService.moveFiles(ids, targetParentId, user);
       return reply.status(204).send();
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message || 'Internal Server Error' });
+      console.error('Move error:', err);
+      if (err.message.includes('busy')) return reply.status(400).send({ error: 'File or folder is busy' });
+      return reply.status(500).send({ error: `Internal Server Error: ${err.message}` });
     }
   }
 
@@ -73,7 +83,7 @@ export class FileController {
       await this.fileService.updateTags(ids, tags, user);
       return reply.status(204).send();
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message || 'Internal Server Error' });
+      return reply.status(500).send({ error: 'Internal Server Error' });
     }
   }
 
@@ -94,7 +104,7 @@ export class FileController {
       if (!scanner) {
         return reply.status(500).send({ error: 'Scanner service not initialized' });
       }
-      await scanner.fullScan();
+      await scanner.initialScan();
       return reply.send({ message: 'Scan started' });
     } catch (err: any) {
       return reply.status(500).send({ error: 'Failed to trigger scan' });

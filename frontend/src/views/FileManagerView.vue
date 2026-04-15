@@ -37,6 +37,7 @@ const isAdmin = computed(() => authStore.user?.role === 'admin');
 
 // State
 const items = ref<any[]>([]);
+const totalItems = ref(0);
 const loading = ref(true);
 const viewMode = ref<'grid' | 'list'>('grid');
 const searchQuery = ref('');
@@ -50,33 +51,149 @@ const showFolderPicker = ref(false);
 const folderPickerTitle = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 const isScanning = ref(false);
+let eventSource: EventSource | null = null;
 
 // MIME type filter from route
 const filterType = computed(() => route.query.type as string || 'all');
 
-const fetchItems = async () => {
-  loading.value = true;
+// Virtual Scrolling State
+const scrollContainer = ref<HTMLElement | null>(null);
+const scrollTop = ref(0);
+const containerHeight = ref(0);
+const itemWidth = ref(200); // Base estimate for grid
+const itemHeight = ref(220); // Base estimate for grid
+const columns = ref(4);
+const chunkSize = ref(50); // Fetch 50 items at once
+
+const updateDimensions = () => {
+  if (!scrollContainer.value) return;
+  const width = scrollContainer.value.clientWidth;
+  containerHeight.value = scrollContainer.value.clientHeight;
+  
+  if (viewMode.value === 'grid') {
+    // Sync with Tailwind grid cols
+    if (width >= 1280) columns.value = 8;
+    else if (width >= 1024) columns.value = 6;
+    else if (width >= 768) columns.value = 4;
+    else if (width >= 640) columns.value = 3;
+    else columns.value = 2;
+    
+    itemWidth.value = (width - ((columns.value + 1) * 32)) / columns.value; // px
+    itemHeight.value = 280; // Fixed row height for grid (including gap)
+  } else {
+    columns.value = 1;
+    itemHeight.value = 88; // Fixed row height for list (including gap)
+  }
+  
+  // After resizing dimensions, we might have new visible area to fetch
+  checkAndFetchMissing();
+};
+
+const totalRows = computed(() => Math.ceil(totalItems.value / columns.value));
+const virtualHeight = computed(() => totalRows.value * itemHeight.value);
+
+const visibleIndices = computed(() => {
+  const startRow = Math.floor(scrollTop.value / itemHeight.value);
+  const visibleRows = Math.ceil(containerHeight.value / itemHeight.value) + 10; // Buffer
+  const startIdx = startRow * columns.value;
+  const endIdx = Math.min(totalItems.value, (startRow + visibleRows) * columns.value);
+  return { start: startIdx, end: endIdx, startRow };
+});
+
+const visibleItems = computed(() => {
+  const { start, end } = visibleIndices.value;
+  return Array.from({ length: end - start }, (_, i) => {
+    const itemIndex = start + i;
+    return {
+      index: itemIndex,
+      data: items.value[itemIndex] || null,
+      top: Math.floor(itemIndex / columns.value) * itemHeight.value,
+      left: 32 + (itemIndex % columns.value) * (itemWidth.value + 32)
+    };
+  });
+});
+
+const onScroll = (e: Event) => {
+  const target = e.target as HTMLElement;
+  scrollTop.value = target.scrollTop;
+  checkAndFetchMissing();
+};
+
+const checkAndFetchMissing = async () => {
+  const { start, end } = visibleIndices.value;
+  
+  // Find chunks to fetch
+  for (let i = start; i < end; i += chunkSize.value) {
+    const chunkStart = Math.floor(i / chunkSize.value) * chunkSize.value;
+    if (!items.value[chunkStart] && !loading.value) {
+      await fetchChunk(chunkStart);
+    }
+  }
+};
+
+const fetchChunk = async (skip: number) => {
   try {
     const params: any = {
       parentId: currentFolderId.value || 'root',
+      skip,
+      limit: chunkSize.value
     };
-    if (filterType.value !== 'all') {
-      params.type = filterType.value;
-    }
-    if (searchQuery.value) {
-      params.search = searchQuery.value;
-    }
+    if (filterType.value !== 'all') params.type = filterType.value;
+    if (searchQuery.value) params.search = searchQuery.value;
     
     const { data } = await api.get('/files', { params });
-    items.value = data;
     
+    // Fill the items array at the correct position
+    data.items.forEach((item: any, idx: number) => {
+      items.value[skip + idx] = item;
+    });
+    
+    if (data.total !== undefined) {
+      totalItems.value = data.total;
+    }
+  } catch (err) {
+    console.error('Failed to fetch chunk:', err);
+  }
+};
+
+const fetchItems = async () => {
+  loading.value = true;
+  items.value = []; // Clear for new folder/query
+  totalItems.value = 0;
+  scrollTop.value = 0;
+  if (scrollContainer.value) scrollContainer.value.scrollTop = 0;
+  
+  try {
+    await fetchChunk(0);
     if (items.value.length > 0 && !focusedItemId.value) {
       focusedItemId.value = items.value[0]._id;
     }
-  } catch (err) {
-    console.error('Failed to fetch items:', err);
   } finally {
     loading.value = false;
+    updateDimensions();
+  }
+};
+
+const refreshItems = async () => {
+  try {
+    // Determine how many items are currently loaded/visible, at least a chunk
+    const limit = Math.max(chunkSize.value, items.value.length);
+    const params: any = {
+      parentId: currentFolderId.value || 'root',
+      skip: 0,
+      limit: limit
+    };
+    if (filterType.value !== 'all') params.type = filterType.value;
+    if (searchQuery.value) params.search = searchQuery.value;
+    
+    const { data } = await api.get('/files', { params });
+    items.value = data.items;
+    
+    if (data.total !== undefined) {
+      totalItems.value = data.total;
+    }
+  } catch (err) {
+    console.error('Failed to refresh items:', err);
   }
 };
 
@@ -318,6 +435,29 @@ const handleKeydown = (e: KeyboardEvent) => {
   }
 };
 
+let resizeObserver: ResizeObserver | null = null;
+
+const setupSSE = () => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+  eventSource = new EventSource(`${baseUrl}/files/events`, { withCredentials: true });
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'fs_change') {
+        refreshItems();
+      }
+    } catch (err) {
+      console.error('SSE Error:', err);
+    }
+  };
+  
+  eventSource.onerror = () => {
+    // Retry transparently is handled by EventSource. 
+    // We can just log or silent fail if auth is lost, etc.
+  };
+};
+
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown);
   window.addEventListener('gamepadconnected', () => rafId = requestAnimationFrame(pollGamepad));
@@ -325,12 +465,26 @@ onMounted(() => {
     if (rafId) cancelAnimationFrame(rafId);
     rafId = null;
   });
+  
+  if (scrollContainer.value) {
+    resizeObserver = new ResizeObserver(() => {
+      updateDimensions();
+    });
+    resizeObserver.observe(scrollContainer.value);
+  }
+  
   if (navigator.getGamepads()[0]) rafId = requestAnimationFrame(pollGamepad);
   fetchItems();
+  setupSSE();
 });
 
 onUnmounted(() => {
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
   window.removeEventListener('keydown', handleKeydown);
+  if (resizeObserver) resizeObserver.disconnect();
   if (rafId) cancelAnimationFrame(rafId);
 });
 
@@ -441,68 +595,87 @@ const formatSize = (bytes: number) => {
       </transition>
 
       <!-- File Grid/List -->
-      <main class="flex-1 overflow-y-auto custom-scrollbar p-8 relative">
-        <div v-if="!loading && items.length > 0" 
-          :class="{
-            'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-6': viewMode === 'grid',
-            'flex flex-col gap-2': viewMode === 'list'
-          }"
+      <main 
+        ref="scrollContainer"
+        @scroll="onScroll"
+        class="flex-1 overflow-y-auto custom-scrollbar relative px-0"
+      >
+        <!-- Virtual Container -->
+        <div 
+          v-if="!loading && totalItems > 0" 
+          class="relative w-full"
+          :style="{ height: virtualHeight + 'px' }"
         >
           <div 
-            v-for="item in items" 
-            :key="item._id"
-            @click="isMultiSelectMode ? toggleSelect(item._id) : focusedItemId = item._id"
-            @dblclick="navigateToFolder(item)"
-            class="group relative cursor-pointer"
-            :class="{
-              'aero-card flex flex-col p-4 transition-all duration-300 hover:scale-105 active:scale-95': viewMode === 'grid',
-              'aero-card px-6 py-4 flex items-center gap-6 group hover:bg-white/5': viewMode === 'list',
-              'ring-2 ring-blue-500 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.3)]': focusedItemId === item._id && !isMultiSelectMode,
-              'opacity-60 grayscale-[0.5]': isMultiSelectMode && !selectedIds.has(item._id),
-              'ring-2 ring-blue-400 bg-blue-400/20': isMultiSelectMode && selectedIds.has(item._id)
+            v-for="item in visibleItems" 
+            :key="item.index"
+            class="absolute transition-all duration-300 p-3"
+            :style="{ 
+              top: item.top + 'px', 
+              left: (viewMode === 'grid' ? item.left : 32) + 'px',
+              width: viewMode === 'grid' ? itemWidth + 'px' : 'calc(100% - 64px)',
+              height: itemHeight + 'px'
             }"
           >
-            <!-- Selection Indicator -->
-            <div v-if="isMultiSelectMode" class="absolute top-2 right-2 z-10">
-              <div v-if="selectedIds.has(item._id)" class="bg-blue-500 rounded-full p-1 shadow-glow animate-pulse-subtle">
-                <CheckSquare :size="16" />
-              </div>
-              <div v-else class="text-white/20">
-                <Square :size="16" />
-              </div>
-            </div>
-
-            <!-- Icon Wrapper -->
-            <div :class="{
-              'aspect-square bg-white/5 rounded-2xl flex items-center justify-center mb-4 transition-all group-hover:bg-white/10 shadow-inner': viewMode === 'grid',
-              'w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center shrink-0': viewMode === 'list'
-            }">
-              <component :is="getFileIcon(item)" :size="viewMode === 'grid' ? 48 : 24" class="transition-transform duration-500 group-hover:scale-110" :class="item.isFolder ? 'text-blue-400' : 'text-white/60'" />
-            </div>
-
-            <!-- Meta -->
-            <div :class="{ 'flex-1 min-w-0': viewMode === 'list' }">
-              <h3 class="text-sm font-medium truncate group-hover:text-blue-300 transition-colors">{{ item.originalName }}</h3>
-              <div class="flex items-center gap-3 mt-1 opacity-40 text-[10px] tracking-widest uppercase font-bold">
-                <span>{{ item.isFolder ? 'Folder' : formatSize(item.size) }}</span>
-                <span v-if="viewMode === 'list'">{{ item.mimeType }}</span>
-                <div v-if="item.tags?.length" class="flex gap-1">
-                  <Tag :size="8" /> {{ item.tags.length }}
+            <!-- Render Real Item or Placeholder -->
+            <div 
+              v-if="item.data"
+              @click="isMultiSelectMode ? toggleSelect(item.data._id) : focusedItemId = item.data._id"
+              @dblclick="navigateToFolder(item.data)"
+              class="group relative cursor-pointer h-full"
+              :class="{
+                'aero-card flex flex-col p-4 transition-all duration-300 hover:scale-105 active:scale-95 overflow-hidden': viewMode === 'grid',
+                'aero-card px-6 py-4 flex items-center gap-6 group hover:bg-white/5': viewMode === 'list',
+                'ring-2 ring-blue-500 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.3)]': focusedItemId === item.data._id && !isMultiSelectMode,
+                'opacity-60 grayscale-[0.5]': isMultiSelectMode && !selectedIds.has(item.data._id),
+                'ring-2 ring-blue-400 bg-blue-400/20': isMultiSelectMode && selectedIds.has(item.data._id)
+              }"
+            >
+              <!-- Selection Indicator -->
+              <div v-if="isMultiSelectMode" class="absolute top-2 right-2 z-10">
+                <div v-if="selectedIds.has(item.data._id)" class="bg-blue-500 rounded-full p-1 shadow-glow animate-pulse-subtle">
+                  <CheckSquare :size="16" />
+                </div>
+                <div v-else class="text-white/20">
+                  <Square :size="16" />
                 </div>
               </div>
+
+              <!-- Icon Wrapper -->
+              <div :class="{
+                'h-32 bg-white/5 rounded-2xl flex items-center justify-center mb-3 transition-all group-hover:bg-white/10 shadow-inner overflow-hidden': viewMode === 'grid',
+                'w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center shrink-0': viewMode === 'list'
+              }">
+                <component :is="getFileIcon(item.data)" :size="viewMode === 'grid' ? 42 : 24" class="transition-transform duration-500 group-hover:scale-110" :class="item.data.isFolder ? 'text-blue-400' : 'text-white/60'" />
+              </div>
+
+              <!-- Meta -->
+              <div :class="{ 'flex-1 min-w-0': viewMode === 'list' }">
+                <h3 class="text-sm font-medium truncate group-hover:text-blue-300 transition-colors">{{ item.data.originalName }}</h3>
+                <div class="flex items-center gap-3 mt-1 opacity-40 text-[10px] tracking-widest uppercase font-bold">
+                  <span>{{ item.data.isFolder ? 'Folder' : formatSize(item.data.size) }}</span>
+                  <span v-if="viewMode === 'list'">{{ item.data.mimeType }}</span>
+                  <div v-if="item.data.tags?.length" class="flex gap-1">
+                    <Tag :size="8" /> {{ item.data.tags.length }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Quick Actions Overlay (Grid only) -->
+              <div v-if="viewMode === 'grid' && !isMultiSelectMode" class="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-all rounded-3xl flex items-end justify-center pb-4 gap-2">
+                <button @click.stop="renameItem(item.data)" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all" :title="t('files.rename')"><Type :size="16" /></button>
+                <button @click.stop="navigateToFolder(item.data)" v-if="item.data.isFolder" class="p-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500 hover:text-white rounded-xl transition-all"><ChevronRight :size="16" /></button>
+                <button @click.stop="selectedIds.add(item.data._id); isMultiSelectMode = true" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"><CheckSquare :size="16" /></button>
+              </div>
             </div>
 
-            <!-- Quick Actions Overlay (Grid only) -->
-            <div v-if="viewMode === 'grid' && !isMultiSelectMode" class="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-all rounded-3xl flex items-end justify-center pb-4 gap-2">
-              <button @click.stop="renameItem(item)" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all" :title="t('files.rename')"><Type :size="16" /></button>
-              <button @click.stop="navigateToFolder(item)" v-if="item.isFolder" class="p-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500 hover:text-white rounded-xl transition-all"><ChevronRight :size="16" /></button>
-              <button @click.stop="selectedIds.add(item._id); isMultiSelectMode = true" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"><CheckSquare :size="16" /></button>
-            </div>
+            <!-- Placeholder Wrapper -->
+            <div v-else class="aero-card h-[calc(100%-1.5rem)] mb-6 animate-pulse bg-white/5 border-none"></div>
           </div>
         </div>
 
         <!-- Empty State -->
-        <div v-else-if="!loading && items.length === 0" class="h-full flex flex-col items-center justify-center text-white/20">
+        <div v-else-if="!loading && totalItems === 0" class="h-full flex flex-col items-center justify-center text-white/20">
           <Folder :size="120" stroke-width="0.5" class="opacity-10 animate-float" />
           <p class="text-2xl font-light tracking-[0.2em] uppercase mt-8">{{ t('files.empty') || 'Zero items found' }}</p>
         </div>

@@ -6,12 +6,29 @@ export class MediaFileRepository {
     return mediaFile.save();
   }
 
+  async createMany(data: any[]): Promise<void> {
+    await MediaFileModel.insertMany(data);
+  }
+
   async findById(id: string): Promise<IMediaFile | null> {
     return MediaFileModel.findById(id).exec();
   }
 
+  async findByPath(filePath: string): Promise<IMediaFile | null> {
+    return MediaFileModel.findOne({ path: filePath }).exec();
+  }
+
+  async findAllPaths(): Promise<Map<string, { id: string, hash?: string, size: number, modifiedAt?: Date }>> {
+    const files = await MediaFileModel.find({}, { path: 1, hash: 1, size: 1, modifiedAt: 1 }).lean().exec();
+    const map = new Map();
+    for (const f of files) {
+      map.set(f.path, { id: (f as any)._id.toString(), hash: f.hash, size: f.size, modifiedAt: f.modifiedAt });
+    }
+    return map;
+  }
+
   async update(id: string, data: any): Promise<IMediaFile | null> {
-    return MediaFileModel.findByIdAndUpdate(id, data, { new: true }).exec();
+    return MediaFileModel.findByIdAndUpdate(id, data, { returnDocument: 'after' }).exec();
   }
 
   async updateMany(ids: string[], data: any): Promise<void> {
@@ -26,26 +43,73 @@ export class MediaFileRepository {
     await MediaFileModel.deleteMany({ _id: { $in: ids } }).exec();
   }
 
-  async findAll(filters: any = {}): Promise<IMediaFile[]> {
-    const query: any = {};
+  async deleteByPathPrefix(pathPrefix: string): Promise<void> {
+    const escaped = pathPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await MediaFileModel.deleteMany({ path: { $regex: new RegExp(`^${escaped}[/\\\\]`) } }).exec();
+  }
+
+  async findByPathPrefix(pathPrefix: string): Promise<IMediaFile[]> {
+    const escaped = pathPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return MediaFileModel.find({ path: { $regex: new RegExp(`^${escaped}[/\\\\]`) } }).exec();
+  }
+
+  async findAll(filters: any = {}): Promise<{ items: IMediaFile[], total: number }> {
+    const conditions: any[] = [];
+
+    // Type filter: show matching files OR any folders (unless isFolder=false is explicitly set)
     if (filters.type) {
-      query.mimeType = { $regex: filters.type, $options: 'i' };
+      if (filters.isFolder === false) {
+        conditions.push({ mimeType: { $regex: filters.type, $options: 'i' } });
+      } else {
+        conditions.push({
+          $or: [
+            { mimeType: { $regex: filters.type, $options: 'i' } },
+            { isFolder: true }
+          ]
+        });
+      }
+    } else if (filters.isFolder !== undefined) {
+      conditions.push({ isFolder: filters.isFolder });
     }
-    if (filters.parentId !== undefined) {
-      query.parentId = filters.parentId === 'root' ? null : filters.parentId;
+
+    if (filters.parentPath !== undefined) {
+      if (filters.parentPath === null) {
+        // Root level: match paths that don't contain any / or \
+        conditions.push({ path: { $regex: /^[^/\\]+$/ } });
+      } else {
+        // Direct children: match parentPath followed by a separator and then no more separators
+        const escapedPath = filters.parentPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        conditions.push({ path: { $regex: new RegExp(`^${escapedPath}[/\\\\][^/\\\\]+$`) } });
+      }
     }
-    if (filters.isFolder !== undefined) {
-      query.isFolder = filters.isFolder;
-    }
+
     if (filters.search) {
-      query.$or = [
-        { originalName: { $regex: filters.search, $options: 'i' } },
-        { tags: { $in: [new RegExp(filters.search, 'i')] } }
-      ];
+      conditions.push({
+        $or: [
+          { originalName: { $regex: filters.search, $options: 'i' } },
+          { tags: { $in: [new RegExp(filters.search, 'i')] } }
+        ]
+      });
     }
+
     if (filters.hash) {
-      query.hash = filters.hash;
+      conditions.push({ hash: filters.hash });
     }
-    return MediaFileModel.find(query).sort({ isFolder: -1, originalName: 1 }).exec();
+
+    const query = conditions.length > 0 ? { $and: conditions } : {};
+
+    const total = await MediaFileModel.countDocuments(query).exec();
+    
+    let dbQuery = MediaFileModel.find(query).sort({ isFolder: -1, originalName: 1 });
+    
+    if (filters.skip !== undefined) {
+      dbQuery = dbQuery.skip(filters.skip);
+    }
+    if (filters.limit !== undefined) {
+      dbQuery = dbQuery.limit(filters.limit);
+    }
+
+    const items = await dbQuery.exec();
+    return { items, total };
   }
 }

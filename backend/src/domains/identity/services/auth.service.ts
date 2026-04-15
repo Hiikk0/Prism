@@ -14,7 +14,7 @@ export class AuthService {
 
   async register(data: any): Promise<any> {
     const settings = await this.settingsRepository.getSettings();
-    const realUserCount = await (this.userRepository as any).model.countDocuments({ isSystem: false });
+    const realUserCount = await this.userRepository.countDocuments({ isSystem: false });
     
     // Only block registration if not the first user
     if (realUserCount > 0 && settings && !settings.registrationEnabled) {

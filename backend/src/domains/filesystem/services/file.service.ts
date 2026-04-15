@@ -1,13 +1,15 @@
-import { unlink, writeFile, mkdir, rm, rename } from 'fs/promises';
+import { unlink, writeFile, mkdir, rm, rename, access, readdir } from 'fs/promises';
 import path from 'path';
 import sanitize from 'sanitize-filename';
 import { MediaFileRepository } from '../repositories/mediafile.repository';
 import { SettingsRepository } from '../../identity/repositories/settings.repository';
+import { ScannerService } from './scanner.service';
 
 export class FileService {
   constructor(
     private repository: MediaFileRepository, 
     private settingsRepository: SettingsRepository,
+    private scannerService: ScannerService,
     private defaultMediaRoot: string
   ) {}
 
@@ -21,11 +23,67 @@ export class FileService {
     return path.join(root, mediaFile.path);
   }
 
+  private sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private async retryRename(oldPath: string, newPath: string, retries = 5, delay = 100): Promise<void> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        await rename(oldPath, newPath);
+        return;
+      } catch (err: any) {
+        if ((err.code === 'EPERM' || err.code === 'EBUSY') && i < retries - 1) {
+          console.warn(`File busy, retrying rename (${i + 1}/${retries}): ${oldPath}`);
+          await this.sleep(delay * Math.pow(2, i)); // Exponential backoff
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  private async retryDelete(physicalPath: string, retries = 5, delay = 100): Promise<void> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        await rm(physicalPath, { recursive: true, force: true });
+        return;
+      } catch (err: any) {
+        if ((err.code === 'EPERM' || err.code === 'EBUSY') && i < retries - 1) {
+          console.warn(`Path busy, retrying delete (${i + 1}/${retries}): ${physicalPath}`);
+          await this.sleep(delay * Math.pow(2, i));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  private async safeMoveDirectory(oldPhysicalPath: string, newPhysicalPath: string): Promise<void> {
+    await mkdir(newPhysicalPath, { recursive: true });
+    const entries = await readdir(oldPhysicalPath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const src = path.join(oldPhysicalPath, entry.name);
+      const dest = path.join(newPhysicalPath, entry.name);
+      
+      if (entry.isDirectory()) {
+        await this.safeMoveDirectory(src, dest);
+      } else {
+        await this.retryRename(src, dest);
+      }
+    }
+  }
+
+  private normalizePath(p: string): string {
+    return p.split(path.sep).join('/');
+  }
+
   async uploadFile(file: any, user: any, parentId?: string): Promise<any> {
     const mediaRoot = await this.getMediaRoot();
     const originalName = file.filename;
     const sanitizedName = sanitize(originalName);
-    const savedName = `${Date.now()}-${sanitizedName}`;
+    const savedName = sanitizedName;
     
     let relativePath = savedName;
     if (parentId && parentId !== 'root') {
@@ -65,7 +123,7 @@ export class FileService {
   async createFolder(name: string, parentId: string | null, user: any): Promise<any> {
     const mediaRoot = await this.getMediaRoot();
     const sanitizedName = sanitize(name);
-    const savedFolderName = `${Date.now()}-${sanitizedName}`;
+    const savedFolderName = sanitizedName;
     
     let relativePath = savedFolderName;
     if (parentId && parentId !== 'root') {
@@ -90,7 +148,16 @@ export class FileService {
     });
   }
 
-  async getFiles(filters: any = {}): Promise<any[]> {
+  async getFiles(filters: any = {}): Promise<{ items: any[], total: number }> {
+    if (filters.parentId !== undefined) {
+      if (filters.parentId === 'root' || !filters.parentId) {
+        filters.parentPath = null; // root level
+      } else {
+        const parent = await this.repository.findById(filters.parentId);
+        if (parent) filters.parentPath = parent.path;
+      }
+      delete filters.parentId;
+    }
     return this.repository.findAll(filters);
   }
 
@@ -105,38 +172,26 @@ export class FileService {
     const mediaRoot = await this.getMediaRoot();
     const sanitizedName = sanitize(newName);
     
-    // Physical Rename
-    const oldPhysicalPath = path.join(mediaRoot, mediaFile.path);
+    const oldRelativePath = this.normalizePath(mediaFile.path);
     const dirName = path.dirname(mediaFile.path);
-    const newRelativePath = path.join(dirName, sanitizedName);
-    const newPhysicalPath = path.join(mediaRoot, newRelativePath);
-
-    // Path Jail Check for new path
-    const resolvedNewPath = path.resolve(newPhysicalPath);
-    const resolvedRoot = path.resolve(mediaRoot);
-    if (!resolvedNewPath.startsWith(resolvedRoot)) {
-      throw new Error('Security: Invalid rename target path');
+    const newRelativePath = this.normalizePath(path.join(dirName, sanitizedName));
+    
+    // Check if target already exists in DATABASE
+    const existingInDb = await this.repository.findByPath(newRelativePath);
+    if (existingInDb) {
+      throw new Error('Target path already exists in database');
     }
 
-    await rename(oldPhysicalPath, newPhysicalPath);
-
-    // If it's a folder, we MUST update all children's paths
-    if (mediaFile.isFolder) {
-      const children = await this.repository.findAll({ path: { $regex: `^${mediaFile.path}/` } });
-      for (const child of children) {
-        const childNewPath = child.path.replace(mediaFile.path, newRelativePath);
-        await this.repository.update(child._id.toString(), { path: childNewPath });
-      }
-    }
+    await this.performMoveOperation(mediaFile, newRelativePath);
 
     return this.repository.update(id, { 
       originalName: newName,
+      savedName: sanitizedName,
       path: newRelativePath
     });
   }
 
   async moveFiles(ids: string[], targetParentId: string | null, user: any): Promise<void> {
-    const mediaRoot = await this.getMediaRoot();
     let targetRelativePath = '';
     if (targetParentId && targetParentId !== 'root') {
       const targetParent = await this.repository.findById(targetParentId);
@@ -144,22 +199,87 @@ export class FileService {
       targetRelativePath = targetParent.path;
     }
 
-    for (const id of ids) {
-      const file = await this.repository.findById(id);
-      if (!file) continue;
+    // Filter out IDs that are children of other IDs in the selection
+    const selectedFiles = await Promise.all(ids.map(id => this.repository.findById(id)));
+    const validFiles = selectedFiles.filter(f => f !== null) as any[];
+    const topLevelFiles = validFiles.filter(file => {
+      const thisPath = this.normalizePath(file.path);
+      return !validFiles.some(other => {
+        const otherPath = this.normalizePath(other.path);
+        return other._id.toString() !== file._id.toString() && 
+               other.isFolder && 
+               thisPath.startsWith(otherPath + '/');
+      });
+    });
 
-      // RBAC
-      if (user.role !== 'admin' && file.uploadedBy.toString() !== (user.id || user._id).toString()) continue;
+    for (const file of topLevelFiles) {
+      const id = file._id.toString();
+      const newRelativePath = this.normalizePath(path.join(targetRelativePath, file.savedName));
 
-      const oldPhysicalPath = path.join(mediaRoot, file.path);
-      const newRelativePath = path.join(targetRelativePath, file.savedName);
-      const newPhysicalPath = path.join(mediaRoot, newRelativePath);
+      // Check if target path already exists in DATABASE
+      const existingInDb = await this.repository.findByPath(newRelativePath);
+      if (existingInDb) {
+        console.warn(`Target path already exists in database, skipping move for: ${file.originalName}`);
+        continue;
+      }
 
-      await rename(oldPhysicalPath, newPhysicalPath);
+      await this.performMoveOperation(file, newRelativePath);
+
       await this.repository.update(id, { 
         parentId: targetParentId === 'root' ? null : targetParentId,
-        path: newRelativePath 
+        path: newRelativePath
       });
+    }
+  }
+
+  private async performMoveOperation(mediaFile: any, newRelativePath: string): Promise<void> {
+    const mediaRoot = await this.getMediaRoot();
+    const oldRelativePath = this.normalizePath(mediaFile.path);
+    const oldPhysicalPath = path.join(mediaRoot, oldRelativePath);
+    const newPhysicalPath = path.join(mediaRoot, newRelativePath);
+
+    // Security & collisions
+    const resolvedNewPath = path.resolve(newPhysicalPath);
+    const resolvedRoot = path.resolve(mediaRoot);
+    if (!resolvedNewPath.startsWith(resolvedRoot)) {
+      throw new Error('Security: Invalid target path');
+    }
+
+    try {
+      await access(newPhysicalPath);
+      throw new Error('Target already exists on disk');
+    } catch (err: any) {
+      if (err.message === 'Target already exists on disk') throw err;
+    }
+
+    // 1. Suspend Watcher
+    await this.scannerService.unwatch(oldRelativePath);
+    await this.scannerService.unwatch(newRelativePath);
+
+    try {
+      // 2. Physical Move
+      if (mediaFile.isFolder) {
+        await this.safeMoveDirectory(oldPhysicalPath, newPhysicalPath);
+        // After deep move, cleanup the old structure
+        await this.retryDelete(oldPhysicalPath);
+      } else {
+        await this.retryRename(oldPhysicalPath, newPhysicalPath);
+      }
+
+      // 3. Recursive DB Update (to preserve ownership/metadata)
+      if (mediaFile.isFolder) {
+        const children = await this.repository.findByPathPrefix(oldRelativePath);
+        for (const child of children) {
+          const normalizedChildPath = this.normalizePath(child.path);
+          if (normalizedChildPath.startsWith(oldRelativePath + '/')) {
+            const childNewPath = newRelativePath + normalizedChildPath.substring(oldRelativePath.length);
+            await this.repository.update(child._id.toString(), { path: childNewPath });
+          }
+        }
+      }
+    } finally {
+      // 4. Resume Watcher
+      await this.scannerService.watch(newRelativePath);
     }
   }
 
@@ -184,9 +304,18 @@ export class FileService {
       const physicalPath = path.join(mediaRoot, mediaFile.path);
       try {
         await rm(physicalPath, { recursive: true, force: true });
-      } catch (err) {
+      } catch (err: any) {
+        if (err.code === 'EPERM' || err.code === 'EBUSY') {
+          throw new Error('File or folder is busy');
+        }
         console.error(`Failed to delete physical path: ${physicalPath}`, err);
       }
+
+      // Recursive DB deletion for all descendants
+      if (mediaFile.isFolder) {
+        await this.repository.deleteByPathPrefix(mediaFile.path);
+      }
+      
       await this.repository.delete(id);
     }
   }

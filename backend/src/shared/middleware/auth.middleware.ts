@@ -5,12 +5,16 @@ export const authMiddleware = (secret: string) => {
     try {
       const token = request.cookies.token;
       if (!token) {
-        return reply.status(401).send({ error: 'Unauthorized: No token provided' });
+        const error: any = new Error('Unauthorized');
+        error.statusCode = 401;
+        throw error;
       }
       
       await request.jwtVerify();
     } catch (err: any) {
-      return reply.status(401).send({ error: 'Unauthorized: Invalid token' });
+      const error: any = new Error('Unauthorized');
+      error.statusCode = 401;
+      throw error;
     }
   };
 };

@@ -6,16 +6,13 @@ import type { queueAsPromised } from 'fastq';
 import { loadEsm } from 'load-esm';
 
 export class MediaProcessorService {
-  private queue: queueAsPromised<string>;
   private mm: any = null;
 
   constructor(
     private repository: MediaFileRepository,
     private mediaRoot: string,
     private thumbnailDir: string
-  ) {
-    this.queue = fastq.promise(this._worker.bind(this), 2); // 2 parallel threads
-  }
+  ) {}
 
   private async getMusicMetadata() {
     if (!this.mm) {
@@ -25,7 +22,7 @@ export class MediaProcessorService {
   }
 
   async processFile(id: string): Promise<void> {
-    await this.queue.push(id);
+    await this._worker(id);
   }
 
   private async _worker(id: string): Promise<void> {

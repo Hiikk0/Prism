@@ -112,6 +112,62 @@ const xmbCategories = computed(() => categories.map(cat => {
           value: () => settingsStore.language === lang.id ? '✓' : '',
           onSelect: () => { settingsStore.language = lang.id }
         }))
+      },
+      {
+        id: 'settings-appearance',
+        label: () => t('settings.appearance') || 'Appearance',
+        icon: Palette,
+        subItems: [
+          {
+            id: 'app-bg-type',
+            label: () => 'Background Type',
+            value: () => authStore.user?.preferences?.backgroundType || 'waves',
+            onSelect: async () => {
+              const types = ['waves', 'image', 'video', 'none'] as const;
+              const current = authStore.user?.preferences?.backgroundType || 'waves';
+              const nextIdx = (types.indexOf(current as any) + 1) % types.length;
+              await authStore.updateProfile({ 
+                preferences: { 
+                  backgroundType: types[nextIdx],
+                  backgroundMediaId: authStore.user?.preferences?.backgroundMediaId || '',
+                  performanceMode: authStore.user?.preferences?.performanceMode || 'high'
+                } 
+              });
+            }
+          },
+          {
+            id: 'app-bg-media',
+            label: () => 'Background Media URL',
+            value: () => authStore.user?.preferences?.backgroundMediaId ? 'SET' : 'NONE',
+            onSelect: async () => {
+              const url = prompt('Enter Background Image/Video URL:', authStore.user?.preferences?.backgroundMediaId || '');
+              if (url !== null) {
+                await authStore.updateProfile({ 
+                  preferences: { 
+                    backgroundType: authStore.user?.preferences?.backgroundType || 'waves',
+                    backgroundMediaId: url,
+                    performanceMode: authStore.user?.preferences?.performanceMode || 'high'
+                  } 
+                });
+              }
+            }
+          },
+          {
+            id: 'app-perf',
+            label: () => 'Performance Mode',
+            value: () => authStore.user?.preferences?.performanceMode || 'high',
+            onSelect: async () => {
+              const mode = authStore.user?.preferences?.performanceMode === 'low' ? 'high' : 'low';
+              await authStore.updateProfile({ 
+                preferences: { 
+                  backgroundType: authStore.user?.preferences?.backgroundType || 'waves',
+                  backgroundMediaId: authStore.user?.preferences?.backgroundMediaId || '',
+                  performanceMode: mode
+                } 
+              });
+            }
+          }
+        ]
       }
     ];
 
@@ -129,6 +185,15 @@ const xmbCategories = computed(() => categories.map(cat => {
               if (authStore.user?.role !== 'admin') return;
               const newPath = prompt('Enter new media path:', settingsStore.mediaPath);
               if (newPath) await settingsStore.updateSystemSettings({ mediaRootDirectory: newPath });
+            }
+          },
+          {
+            id: 'gen-scan-limit',
+            label: () => 'Scanner Concurrency',
+            value: () => (settingsStore as any).scannerConcurrency?.toString() || '2',
+            onSelect: async () => {
+              const limit = prompt('Parallel file processing limit (1-8):', (settingsStore as any).scannerConcurrency?.toString() || '2');
+              if (limit) await settingsStore.updateSystemSettings({ scannerConcurrency: parseInt(limit) });
             }
           },
           {
@@ -155,26 +220,6 @@ const xmbCategories = computed(() => categories.map(cat => {
           value: () => settingsStore.activeTheme === theme.label ? 'ACTIVE' : '',
           onSelect: () => { settingsStore.activeTheme = theme.label }
         }))
-      },
-      {
-        id: 'settings-appearance',
-        label: () => t('settings.appearance') || 'Appearance',
-        icon: Palette,
-        subItems: [
-          {
-            id: 'app-bg',
-            label: () => 'Background',
-            value: () => settingsStore.background,
-            onSelect: () => { settingsStore.background = settingsStore.background === 'dynamic-wave' ? 'solid-blue' : 'dynamic-wave' }
-          },
-          {
-            id: 'app-font',
-            label: () => 'Font Color',
-            icon: Type,
-            value: () => settingsStore.fontColor,
-            onSelect: () => { settingsStore.fontColor = settingsStore.fontColor === '#ffffff' ? '#e0f2fe' : '#ffffff' }
-          }
-        ]
       }
     );
 

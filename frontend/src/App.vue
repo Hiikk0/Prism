@@ -24,7 +24,7 @@ onMounted(async () => {
     <XmbBackground />
 
     <!-- Base Layer (Bottom-most) -->
-    <div class="fixed inset-0 pointer-events-none -z-60 bg-[#020202] bg-gradient-to-br from-[#02040a] via-[#050505] to-[#020202]"></div>
+    <div class="fixed inset-0 pointer-events-none -z-60 bg-[#020202] bg-linear-to-br from-[#02040a] via-[#050505] to-[#020202]"></div>
   </div>
 </template>
 

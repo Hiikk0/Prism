@@ -37,7 +37,7 @@ const fetchFolders = async () => {
     
     const { data } = await api.get('/files', { params });
     // Filter out excluded IDs
-    folders.value = data.filter((f: any) => !props.excludeIds?.includes(f._id));
+    folders.value = (data.items || []).filter((f: any) => !props.excludeIds?.includes(f._id));
     focusedIndex.value = 0;
   } catch (err) {
     console.error('Failed to fetch folders for picker:', err);

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { useXmbNavigation, type XmbCategory } from './useXmbNavigation';
 import { User, LogIn } from 'lucide-vue-next';
 import { ref } from 'vue';
