@@ -4,6 +4,19 @@ import crypto from 'crypto';
 import { UserRepository } from '../repositories/user.repository';
 import { SettingsRepository } from '../repositories/settings.repository';
 import { securityLogger } from '../../../shared/services/security-logger.service';
+import { IUser } from '../models/user.model';
+import { RegisterPayload } from '../schemas/auth.schema';
+
+export interface AuthResponse {
+  user: Omit<IUser, 'passwordHash' | 'recoveryKeyHash'>;
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface PublicSettings {
+  registrationEnabled: boolean;
+  guestLoginEnabled: boolean;
+}
 
 export class AuthService {
   constructor(
@@ -12,7 +25,7 @@ export class AuthService {
     private jwtSecret: string
   ) {}
 
-  async register(data: any): Promise<any> {
+  async register(data: RegisterPayload): Promise<AuthResponse & { recoveryKey: string }> {
     const settings = await this.settingsRepository.getSettings();
     const realUserCount = await this.userRepository.countDocuments({ isSystem: false });
     
@@ -45,17 +58,20 @@ export class AuthService {
 
     const tokens = this.generateTokens(savedUser);
     
-    const userObj = savedUser.toObject();
-    const { passwordHash: _, recoveryKeyHash: __, ...userWithoutSecrets } = userObj;
+    // Convert to object and remove secrets without creating unused variables
+    const userObj = savedUser.toObject() as IUser;
+    const userWithoutSecrets: Partial<IUser> = { ...userObj };
+    delete userWithoutSecrets.passwordHash;
+    delete userWithoutSecrets.recoveryKeyHash;
     
     return { 
-      user: userWithoutSecrets, 
+      user: userWithoutSecrets as AuthResponse['user'], 
       ...tokens,
       recoveryKey // Plaintext only once on registration
     };
   }
 
-  async login(username: string, password: string): Promise<any> {
+  async login(username: string, password: string): Promise<AuthResponse> {
     const user = await this.userRepository.findByUsername(username);
     if (!user) {
       securityLogger.logEvent('FAILED_LOGIN', { username, reason: 'User not found' });
@@ -72,10 +88,12 @@ export class AuthService {
 
     const tokens = this.generateTokens(user);
     
-    const userObj = user.toObject();
-    const { passwordHash: _, recoveryKeyHash: __, ...userWithoutSecrets } = userObj;
+    const userObj = user.toObject() as IUser;
+    const userWithoutSecrets: Partial<IUser> = { ...userObj };
+    delete userWithoutSecrets.passwordHash;
+    delete userWithoutSecrets.recoveryKeyHash;
     
-    return { user: userWithoutSecrets, ...tokens };
+    return { user: userWithoutSecrets as AuthResponse['user'], ...tokens };
   }
 
   async resetPassword(username: string, recoveryKey: string, newPassword: string): Promise<void> {
@@ -97,7 +115,7 @@ export class AuthService {
     securityLogger.logEvent('PASSWORD_RESET', { username });
   }
 
-  async guestLogin(): Promise<any> {
+  async guestLogin(): Promise<AuthResponse> {
     const settings = await this.settingsRepository.getSettings();
     if (!settings || !settings.guestLoginEnabled) {
       throw new Error('Guest login is disabled');
@@ -121,15 +139,15 @@ export class AuthService {
     
     return {
       user: {
-        id: guestUser._id,
+        _id: guestUser._id,
         username: guestUsername,
         role: 'guest'
-      },
+      } as AuthResponse['user'],
       ...tokens
     };
   }
 
-  async getPublicSettings(): Promise<any> {
+  async getPublicSettings(): Promise<PublicSettings> {
     const settings = await this.settingsRepository.getSettings();
     return {
       registrationEnabled: settings?.registrationEnabled ?? true,
@@ -137,7 +155,7 @@ export class AuthService {
     };
   }
 
-  private generateTokens(user: any, expiry: string | number = '1d'): { accessToken: string, refreshToken: string } {
+  private generateTokens(user: IUser, expiry: string | number = '1d'): { accessToken: string, refreshToken: string } {
     const accessToken = jwt.sign(
       { id: user._id, username: user.username, role: user.role }, 
       this.jwtSecret, 

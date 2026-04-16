@@ -1,19 +1,19 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyRequest } from 'fastify';
 
-export const authMiddleware = (secret: string) => {
-  return async (request: FastifyRequest, reply: FastifyReply) => {
+export const authMiddleware = () => {
+  return async (request: FastifyRequest) => {
     try {
       const token = request.cookies.token;
       if (!token) {
-        const error: any = new Error('Unauthorized');
-        error.statusCode = 401;
+        const error = new Error('Unauthorized');
+        Object.assign(error, { statusCode: 401 });
         throw error;
       }
       
       await request.jwtVerify();
-    } catch (err: any) {
-      const error: any = new Error('Unauthorized');
-      error.statusCode = 401;
+    } catch {
+      const error = new Error('Unauthorized');
+      Object.assign(error, { statusCode: 401 });
       throw error;
     }
   };

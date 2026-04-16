@@ -1,5 +1,8 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { AuthService } from '../services/auth.service';
+import { validate } from '../../../shared/utils/validate';
+import { RegisterSchema, LoginSchema, ResetPasswordSchema } from '../schemas/auth.schema';
+import { getErrorMessage } from '../../../shared/utils/error.util';
 
 export class AuthController {
   constructor(private authService: AuthService) {}
@@ -26,32 +29,35 @@ export class AuthController {
 
   async register(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const result = await this.authService.register(request.body);
+      const payload = validate(RegisterSchema, request.body);
+      const result = await this.authService.register(payload);
       this.setTokenCookies(reply, result.accessToken, result.refreshToken);
       return reply.status(201).send({ 
         user: result.user, 
         recoveryKey: result.recoveryKey 
       });
-    } catch (err: any) {
-      if (err.message === 'Username already exists') {
-        return reply.status(409).send({ error: err.message });
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      if (message === 'Username already exists') {
+        return reply.status(409).send({ error: message });
       }
-      if (err.message === 'Registration is currently disabled') {
-        return reply.status(403).send({ error: err.message });
+      if (message === 'Registration is currently disabled') {
+        return reply.status(403).send({ error: message });
       }
-      return reply.status(500).send({ error: err.message || 'Internal Server Error' });
+      return reply.status(500).send({ error: message || 'Internal Server Error' });
     }
   }
 
   async login(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { username, password } = request.body as any;
+      const { username, password } = validate(LoginSchema, request.body);
       const result = await this.authService.login(username, password);
       this.setTokenCookies(reply, result.accessToken, result.refreshToken);
       return reply.status(200).send({ user: result.user });
-    } catch (err: any) {
-      if (err.message === 'Invalid credentials') {
-        return reply.status(401).send({ error: err.message });
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      if (message === 'Invalid credentials') {
+        return reply.status(401).send({ error: message });
       }
       return reply.status(500).send({ error: 'Internal Server Error' });
     }
@@ -59,11 +65,11 @@ export class AuthController {
 
   async resetPassword(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { username, recoveryKey, newPassword } = request.body as any;
+      const { username, recoveryKey, newPassword } = validate(ResetPasswordSchema, request.body);
       await this.authService.resetPassword(username, recoveryKey, newPassword);
       return reply.status(200).send({ message: 'Password reset successfully' });
-    } catch (err: any) {
-      return reply.status(400).send({ error: err.message });
+    } catch (err: unknown) {
+      return reply.status(400).send({ error: getErrorMessage(err) });
     }
   }
 
@@ -72,16 +78,16 @@ export class AuthController {
       const result = await this.authService.guestLogin();
       this.setTokenCookies(reply, result.accessToken, result.refreshToken);
       return reply.status(200).send({ user: result.user });
-    } catch (err: any) {
-      return reply.status(403).send({ error: err.message });
+    } catch (err: unknown) {
+      return reply.status(403).send({ error: getErrorMessage(err) });
     }
   }
 
   async me(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const user = (request as any).user;
+      const user = request.user;
       return reply.status(200).send({ user });
-    } catch (err: any) {
+    } catch {
       return reply.status(500).send({ error: 'Internal Server Error' });
     }
   }
@@ -90,7 +96,7 @@ export class AuthController {
     try {
       const settings = await this.authService.getPublicSettings();
       return reply.status(200).send(settings);
-    } catch (err: any) {
+    } catch {
       return reply.status(500).send({ error: 'Internal Server Error' });
     }
   }
@@ -100,7 +106,7 @@ export class AuthController {
       reply.clearCookie('token', { path: '/' });
       reply.clearCookie('refreshToken', { path: '/api/auth/refresh' });
       return reply.status(200).send({ message: 'Logged out successfully' });
-    } catch (err: any) {
+    } catch {
       return reply.status(500).send({ error: 'Internal Server Error' });
     }
   }

@@ -106,7 +106,7 @@ const xmbCategories = computed(() => categories.map(cat => {
         id: 'settings-lang',
         label: () => t('settings.language') || 'Language',
         icon: Globe,
-        subItems: settingsStore.availableLanguages.map(lang => ({
+        subItems: settingsStore.availableLanguages.map((lang: { id: string, label: string }) => ({
           id: lang.id,
           label: () => lang.label,
           value: () => settingsStore.language === lang.id ? '✓' : '',
@@ -190,9 +190,9 @@ const xmbCategories = computed(() => categories.map(cat => {
           {
             id: 'gen-scan-limit',
             label: () => 'Scanner Concurrency',
-            value: () => (settingsStore as any).scannerConcurrency?.toString() || '2',
+            value: () => settingsStore.scannerConcurrency.toString(),
             onSelect: async () => {
-              const limit = prompt('Parallel file processing limit (1-8):', (settingsStore as any).scannerConcurrency?.toString() || '2');
+              const limit = prompt('Parallel file processing limit (1-8):', settingsStore.scannerConcurrency.toString());
               if (limit) await settingsStore.updateSystemSettings({ scannerConcurrency: parseInt(limit) });
             }
           },
@@ -214,7 +214,7 @@ const xmbCategories = computed(() => categories.map(cat => {
         id: 'settings-themes',
         label: () => t('settings.themes') || 'Themes',
         icon: Layout,
-        subItems: settingsStore.availableThemes.map(theme => ({
+        subItems: settingsStore.availableThemes.map((theme: { id: string, label: string }) => ({
           id: theme.id,
           label: () => theme.label,
           value: () => settingsStore.activeTheme === theme.label ? 'ACTIVE' : '',
@@ -238,7 +238,7 @@ const handleLogout = async () => {
   router.push({ name: 'auth' });
 };
 
-const openFiles = (item: any) => {
+const openFiles = (item: XmbItem) => {
   if (item.onSelect) {
     item.onSelect();
   } else if (item.type) {

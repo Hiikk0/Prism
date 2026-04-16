@@ -24,7 +24,7 @@ const start = async () => {
     const { ScannerService } = await import('./domains/filesystem/services/scanner.service');
     const { MediaProcessorService } = await import('./domains/filesystem/services/media-processor.service');
     const { MediaFileRepository } = await import('./domains/filesystem/repositories/mediafile.repository');
-    const bcrypt = await import('bcryptjs');
+    const bcrypt = (await import('bcryptjs')) as typeof import('bcryptjs');
 
     const settingsRepo = new SettingsRepository();
     const userRepo = new UserRepository();
@@ -43,7 +43,7 @@ const start = async () => {
         recoveryKeyHash: 'n/a',
         role: 'admin',
         isSystem: true
-      } as any);
+      });
       app.log.info('System user created');
     }
 

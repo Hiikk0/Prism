@@ -11,11 +11,11 @@ export default async function fileRoutes(fastify: FastifyInstance, options: { jw
   const fileService = new FileService(
     new MediaFileRepository(), 
     new SettingsRepository(),
-    (fastify as any).scanner,
+    fastify.scanner!,
     options.mediaRoot
   );
   const fileController = new FileController(fileService);
-  const auth = authMiddleware(options.jwtSecret);
+  const auth = authMiddleware();
 
   fastify.get('/', { preHandler: [auth] }, fileController.getFiles.bind(fileController));
   

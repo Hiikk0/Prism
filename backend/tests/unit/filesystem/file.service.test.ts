@@ -26,7 +26,7 @@ describe('FileService', () => {
   });
 
   describe('uploadFile', () => {
-    const mockUser = { _id: 'user123', role: 'user' };
+    const mockUser = { id: 'user123', username: 'user@test.com', role: 'user' as const };
     const mockFilePayload = {
       filename: 'test movie.mp4',
       mimetype: 'video/mp4',
@@ -78,7 +78,7 @@ describe('FileService', () => {
       mockRepo.findById.mockResolvedValue(mockFile as any);
       (fs.rm as jest.Mock).mockResolvedValue(undefined);
 
-      await fileService.deleteFiles(['file1'], { _id: 'user123', role: 'user' } as any);
+      await fileService.deleteFiles(['file1'], { id: 'user123', username: 'user@test.com', role: 'user' as const });
 
       expect(fs.rm).toHaveBeenCalledWith(expect.stringContaining('123-test.mp4'), expect.any(Object));
       expect(mockRepo.delete).toHaveBeenCalledWith('file1');
@@ -87,14 +87,14 @@ describe('FileService', () => {
     it('should allow admin to delete any file', async () => {
       mockRepo.findById.mockResolvedValue(mockFile as any);
       
-      await fileService.deleteFiles(['file1'], { _id: 'admin456', role: 'admin' } as any);
+      await fileService.deleteFiles(['file1'], { id: 'admin456', username: 'admin@test.com', role: 'admin' as const });
 
       expect(mockRepo.delete).toHaveBeenCalledWith('file1');
     });
   });
 
   describe('renameFile (Deep Move)', () => {
-    const mockUser = { _id: 'user123', role: 'user' };
+    const mockUser = { id: 'user123', username: 'user@test.com', role: 'user' as const };
     const mockFolder = { 
       _id: 'folder1', 
       originalName: 'OldFolder', 

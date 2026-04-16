@@ -9,7 +9,7 @@ export class UserRepository {
     return UserModel.findById(id).exec();
   }
 
-  async countDocuments(filter: any = {}): Promise<number> {
+  async countDocuments(filter: Record<string, unknown> = {}): Promise<number> {
     return UserModel.countDocuments(filter).exec();
   }
 
@@ -17,16 +17,16 @@ export class UserRepository {
     return UserModel.countDocuments().exec();
   }
 
-  async create(data: any): Promise<IUser> {
+  async create(data: Partial<IUser>): Promise<IUser> {
     const user = new UserModel(data);
     return user.save();
   }
 
-  async update(id: string, data: any): Promise<IUser | null> {
+  async update(id: string, data: Partial<IUser>): Promise<IUser | null> {
     return UserModel.findByIdAndUpdate(id, data, { returnDocument: 'after' }).exec();
   }
 
-  async delete(id: string): Promise<any> {
+  async delete(id: string): Promise<IUser | null> {
     return UserModel.findByIdAndDelete(id).exec();
   }
 

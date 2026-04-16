@@ -1,12 +1,13 @@
 import { MediaFileModel, IMediaFile } from '../models/mediafile.model';
+import { ResolvedFileFilters } from '../types';
 
 export class MediaFileRepository {
-  async create(data: any): Promise<IMediaFile> {
+  async create(data: Partial<IMediaFile>): Promise<IMediaFile> {
     const mediaFile = new MediaFileModel(data);
     return mediaFile.save();
   }
 
-  async createMany(data: any[]): Promise<void> {
+  async createMany(data: Partial<IMediaFile>[]): Promise<void> {
     await MediaFileModel.insertMany(data);
   }
 
@@ -20,18 +21,18 @@ export class MediaFileRepository {
 
   async findAllPaths(): Promise<Map<string, { id: string, hash?: string, size: number, modifiedAt?: Date }>> {
     const files = await MediaFileModel.find({}, { path: 1, hash: 1, size: 1, modifiedAt: 1 }).lean().exec();
-    const map = new Map();
+    const map = new Map<string, { id: string, hash?: string, size: number, modifiedAt?: Date }>();
     for (const f of files) {
-      map.set(f.path, { id: (f as any)._id.toString(), hash: f.hash, size: f.size, modifiedAt: f.modifiedAt });
+      map.set(f.path, { id: f._id.toString(), hash: f.hash, size: f.size, modifiedAt: f.modifiedAt });
     }
     return map;
   }
 
-  async update(id: string, data: any): Promise<IMediaFile | null> {
+  async update(id: string, data: Partial<IMediaFile>): Promise<IMediaFile | null> {
     return MediaFileModel.findByIdAndUpdate(id, data, { returnDocument: 'after' }).exec();
   }
 
-  async updateMany(ids: string[], data: any): Promise<void> {
+  async updateMany(ids: string[], data: Partial<IMediaFile>): Promise<void> {
     await MediaFileModel.updateMany({ _id: { $in: ids } }, data).exec();
   }
 
@@ -53,8 +54,8 @@ export class MediaFileRepository {
     return MediaFileModel.find({ path: { $regex: new RegExp(`^${escaped}[/\\\\]`) } }).exec();
   }
 
-  async findAll(filters: any = {}): Promise<{ items: IMediaFile[], total: number }> {
-    const conditions: any[] = [];
+  async findAll(filters: ResolvedFileFilters = {}): Promise<{ items: IMediaFile[], total: number }> {
+    const conditions: Record<string, unknown>[] = [];
 
     // Type filter: show matching files OR any folders (unless isFolder=false is explicitly set)
     if (filters.type) {

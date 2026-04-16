@@ -5,8 +5,6 @@ import authRoutes from './domains/identity/routes/auth.routes';
 import adminRoutes from './domains/identity/routes/admin.routes';
 import userRoutes from './domains/identity/routes/user.routes';
 import fileRoutes from './domains/filesystem/routes/file.routes';
-import { authMiddleware } from './shared/middleware/auth.middleware';
-import { rbacMiddleware } from './shared/middleware/rbac.middleware';
 import fastifyJwt from '@fastify/jwt';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyCors from '@fastify/cors';

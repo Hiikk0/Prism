@@ -1,12 +1,12 @@
 import path from 'path';
 import { MediaFileRepository } from '../repositories/mediafile.repository';
 import ffmpeg from 'fluent-ffmpeg';
-import * as fastq from 'fastq';
-import type { queueAsPromised } from 'fastq';
 import { loadEsm } from 'load-esm';
+import { IMediaMetadata } from '../models/mediafile.model';
+import { getErrorMessage } from '../../../shared/utils/error.util';
 
 export class MediaProcessorService {
-  private mm: any = null;
+  private mm: typeof import('music-metadata') | null = null;
 
   constructor(
     private repository: MediaFileRepository,
@@ -30,7 +30,7 @@ export class MediaProcessorService {
     if (!file) return;
 
     const fullPath = path.join(this.mediaRoot, file.path);
-    const metadata: any = {};
+    const metadata: IMediaMetadata = {};
 
     try {
       if (file.mimeType.startsWith('audio')) {
@@ -41,7 +41,7 @@ export class MediaProcessorService {
         metadata.title = audioMetadata.common.title;
         metadata.album = audioMetadata.common.album;
       } else if (file.mimeType.startsWith('video')) {
-        const ffprobeData: any = await new Promise((resolve, reject) => {
+        const ffprobeData: ffmpeg.FfprobeData = await new Promise((resolve, reject) => {
           ffmpeg.ffprobe(fullPath, (err, data) => (err ? reject(err) : resolve(data)));
         });
 
@@ -55,9 +55,9 @@ export class MediaProcessorService {
         const thumbnailName = `${file.savedName.split('.')[0]}.jpg`;
         metadata.thumbnailPath = path.join('.cache/thumbnails', thumbnailName);
 
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           ffmpeg(fullPath)
-            .on('end', resolve)
+            .on('end', () => resolve())
             .on('error', (err) => {
               console.error(`FFMPEG error for ${file.savedName}:`, err);
               reject(err);
@@ -72,8 +72,8 @@ export class MediaProcessorService {
       }
 
       await this.repository.update(id, { metadata });
-    } catch (err) {
-      console.error(`ERROR processing media ${id}:`, err);
+    } catch (err: unknown) {
+      console.error(`ERROR processing media ${id}:`, getErrorMessage(err));
     }
   }
 }

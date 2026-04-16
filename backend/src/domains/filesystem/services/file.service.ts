@@ -1,9 +1,12 @@
-import { unlink, writeFile, mkdir, rm, rename, access, readdir } from 'fs/promises';
+import { writeFile, mkdir, rm, rename, access, readdir } from 'fs/promises';
 import path from 'path';
 import sanitize from 'sanitize-filename';
 import { MediaFileRepository } from '../repositories/mediafile.repository';
 import { SettingsRepository } from '../../identity/repositories/settings.repository';
 import { ScannerService } from './scanner.service';
+import { JwtUser, MultipartFile, FileFilters } from '../types';
+import { IMediaFile } from '../models/mediafile.model';
+import { getErrorCode, getErrorMessage } from '../../../shared/utils/error.util';
 
 export class FileService {
   constructor(
@@ -18,7 +21,7 @@ export class FileService {
     return settings?.mediaRootDirectory || this.defaultMediaRoot;
   }
 
-  private async getPhysicalPath(mediaFile: any): Promise<string> {
+  private async getPhysicalPath(mediaFile: IMediaFile): Promise<string> {
     const root = await this.getMediaRoot();
     return path.join(root, mediaFile.path);
   }
@@ -32,8 +35,9 @@ export class FileService {
       try {
         await rename(oldPath, newPath);
         return;
-      } catch (err: any) {
-        if ((err.code === 'EPERM' || err.code === 'EBUSY') && i < retries - 1) {
+      } catch (err: unknown) {
+        const code = getErrorCode(err);
+        if ((code === 'EPERM' || code === 'EBUSY') && i < retries - 1) {
           console.warn(`File busy, retrying rename (${i + 1}/${retries}): ${oldPath}`);
           await this.sleep(delay * Math.pow(2, i)); // Exponential backoff
           continue;
@@ -48,8 +52,9 @@ export class FileService {
       try {
         await rm(physicalPath, { recursive: true, force: true });
         return;
-      } catch (err: any) {
-        if ((err.code === 'EPERM' || err.code === 'EBUSY') && i < retries - 1) {
+      } catch (err: unknown) {
+        const code = getErrorCode(err);
+        if ((code === 'EPERM' || code === 'EBUSY') && i < retries - 1) {
           console.warn(`Path busy, retrying delete (${i + 1}/${retries}): ${physicalPath}`);
           await this.sleep(delay * Math.pow(2, i));
           continue;
@@ -79,7 +84,7 @@ export class FileService {
     return p.split(path.sep).join('/');
   }
 
-  async uploadFile(file: any, user: any, parentId?: string): Promise<any> {
+  async uploadFile(file: MultipartFile, user: JwtUser, parentId?: string): Promise<IMediaFile> {
     const mediaRoot = await this.getMediaRoot();
     const originalName = file.filename;
     const sanitizedName = sanitize(originalName);
@@ -112,7 +117,7 @@ export class FileService {
       path: relativePath,
       mimeType: file.mimetype,
       size: fileContent.length,
-      uploadedBy: user.id || user._id,
+      uploadedBy: user.id,
       parentId: parentId === 'root' ? null : parentId,
       isFolder: false,
     });
@@ -120,7 +125,7 @@ export class FileService {
     return mediaFile;
   }
 
-  async createFolder(name: string, parentId: string | null, user: any): Promise<any> {
+  async createFolder(name: string, parentId: string | null, user: JwtUser): Promise<IMediaFile> {
     const mediaRoot = await this.getMediaRoot();
     const sanitizedName = sanitize(name);
     const savedFolderName = sanitizedName;
@@ -142,37 +147,36 @@ export class FileService {
       path: relativePath,
       mimeType: 'directory',
       size: 0,
-      uploadedBy: user.id || user._id,
+      uploadedBy: user.id,
       parentId: parentId === 'root' ? null : parentId,
       isFolder: true,
     });
   }
 
-  async getFiles(filters: any = {}): Promise<{ items: any[], total: number }> {
+  async getFiles(filters: FileFilters = {}): Promise<{ items: IMediaFile[], total: number }> {
+    const queryFilters: Record<string, unknown> = { ...filters }; // repository needs internal shape
     if (filters.parentId !== undefined) {
       if (filters.parentId === 'root' || !filters.parentId) {
-        filters.parentPath = null; // root level
+        queryFilters.parentPath = null; // root level
       } else {
         const parent = await this.repository.findById(filters.parentId);
-        if (parent) filters.parentPath = parent.path;
+        if (parent) queryFilters.parentPath = parent.path;
       }
-      delete filters.parentId;
+      delete queryFilters.parentId;
     }
-    return this.repository.findAll(filters);
+    return this.repository.findAll(queryFilters as Record<string, unknown>);
   }
 
-  async renameFile(id: string, newName: string, user: any): Promise<any> {
+  async renameFile(id: string, newName: string, user: JwtUser): Promise<IMediaFile | null> {
     const mediaFile = await this.repository.findById(id);
     if (!mediaFile) throw new Error('File not found');
 
-    if (user.role !== 'admin' && mediaFile.uploadedBy.toString() !== (user.id || user._id).toString()) {
+    if (user.role !== 'admin' && mediaFile.uploadedBy.toString() !== user.id) {
       throw new Error('Forbidden: You can only rename your own files');
     }
 
-    const mediaRoot = await this.getMediaRoot();
     const sanitizedName = sanitize(newName);
     
-    const oldRelativePath = this.normalizePath(mediaFile.path);
     const dirName = path.dirname(mediaFile.path);
     const newRelativePath = this.normalizePath(path.join(dirName, sanitizedName));
     
@@ -191,7 +195,7 @@ export class FileService {
     });
   }
 
-  async moveFiles(ids: string[], targetParentId: string | null, user: any): Promise<void> {
+  async moveFiles(ids: string[], targetParentId: string | null, user: JwtUser): Promise<void> {
     let targetRelativePath = '';
     if (targetParentId && targetParentId !== 'root') {
       const targetParent = await this.repository.findById(targetParentId);
@@ -201,7 +205,7 @@ export class FileService {
 
     // Filter out IDs that are children of other IDs in the selection
     const selectedFiles = await Promise.all(ids.map(id => this.repository.findById(id)));
-    const validFiles = selectedFiles.filter(f => f !== null) as any[];
+    const validFiles = selectedFiles.filter((f): f is IMediaFile => f !== null);
     const topLevelFiles = validFiles.filter(file => {
       const thisPath = this.normalizePath(file.path);
       return !validFiles.some(other => {
@@ -213,6 +217,12 @@ export class FileService {
     });
 
     for (const file of topLevelFiles) {
+      // RBAC check: Only admin or owner can move
+      if (user.role !== 'admin' && file.uploadedBy.toString() !== user.id) {
+        console.warn(`Permission denied: Cannot move file ${file.originalName}`);
+        continue;
+      }
+
       const id = file._id.toString();
       const newRelativePath = this.normalizePath(path.join(targetRelativePath, file.savedName));
 
@@ -232,7 +242,7 @@ export class FileService {
     }
   }
 
-  private async performMoveOperation(mediaFile: any, newRelativePath: string): Promise<void> {
+  private async performMoveOperation(mediaFile: IMediaFile, newRelativePath: string): Promise<void> {
     const mediaRoot = await this.getMediaRoot();
     const oldRelativePath = this.normalizePath(mediaFile.path);
     const oldPhysicalPath = path.join(mediaRoot, oldRelativePath);
@@ -248,8 +258,8 @@ export class FileService {
     try {
       await access(newPhysicalPath);
       throw new Error('Target already exists on disk');
-    } catch (err: any) {
-      if (err.message === 'Target already exists on disk') throw err;
+    } catch (err: unknown) {
+      if (getErrorMessage(err) === 'Target already exists on disk') throw err;
     }
 
     // 1. Suspend Watcher
@@ -283,30 +293,30 @@ export class FileService {
     }
   }
 
-  async updateTags(ids: string[], tags: string[], user: any): Promise<void> {
+  async updateTags(ids: string[], tags: string[], user: JwtUser): Promise<void> {
     for (const id of ids) {
       const file = await this.repository.findById(id);
       if (!file) continue;
-      if (user.role !== 'admin' && file.uploadedBy.toString() !== (user.id || user._id).toString()) continue;
+      if (user.role !== 'admin' && file.uploadedBy.toString() !== user.id) continue;
       
       await this.repository.update(id, { tags });
     }
   }
 
-  async deleteFiles(ids: string[], user: any): Promise<void> {
+  async deleteFiles(ids: string[], user: JwtUser): Promise<void> {
     const mediaRoot = await this.getMediaRoot();
     for (const id of ids) {
       const mediaFile = await this.repository.findById(id);
       if (!mediaFile) continue;
 
-      if (user.role !== 'admin' && mediaFile.uploadedBy.toString() !== (user.id || user._id).toString()) continue;
+      if (user.role !== 'admin' && mediaFile.uploadedBy.toString() !== user.id) continue;
 
       const physicalPath = path.join(mediaRoot, mediaFile.path);
       try {
         await rm(physicalPath, { recursive: true, force: true });
-      } catch (err: any) {
-        if (err.code === 'EPERM' || err.code === 'EBUSY') {
-          throw new Error('File or folder is busy');
+      } catch (err: unknown) {
+        if (getErrorCode(err) === 'EPERM' || getErrorCode(err) === 'EBUSY') {
+          throw new Error('File or folder is busy', { cause: err });
         }
         console.error(`Failed to delete physical path: ${physicalPath}`, err);
       }

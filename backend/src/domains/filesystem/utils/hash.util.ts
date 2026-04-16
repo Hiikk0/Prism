@@ -2,11 +2,14 @@ import fs from 'fs/promises';
 import { loadEsm } from 'load-esm';
 
 const CHUNK_SIZE = 1024 * 1024; // 1MB
-let hasher: any = null;
 
-async function getHasher() {
+type XXHashHasher = (input: Uint8Array) => bigint;
+
+let hasher: XXHashHasher | null = null;
+
+async function getHasher(): Promise<XXHashHasher> {
   if (!hasher) {
-    const xxhashInstance = await loadEsm<any>('xxhash-wasm');
+    const xxhashInstance = await loadEsm<{ default: () => Promise<{ h64Raw: XXHashHasher }> }>('xxhash-wasm');
     const { h64Raw } = await xxhashInstance.default();
     hasher = h64Raw;
   }

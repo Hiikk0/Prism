@@ -32,7 +32,7 @@ export class SecurityLoggerService {
     logger = testLogger;
   }
 
-  logEvent(event: string, details: any) {
+  logEvent(event: string, details: Record<string, unknown>) {
     if (process.env.SECURITY_LOGGING === 'false') return;
 
     const safeDetails = { ...details };

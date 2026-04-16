@@ -211,7 +211,7 @@ const handleAuthSubmit = async () => {
       router.push({ name: 'home' });
     } else {
       const response = await authStore.register({ username: username.value, password: password.value });
-      receivedRecoveryKey.value = response.recoveryKey;
+      receivedRecoveryKey.value = response.recoveryKey || '';
       showRecoveryModal.value = true;
     }
   } catch (err: any) {

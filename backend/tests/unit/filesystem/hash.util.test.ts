@@ -6,7 +6,7 @@ import crypto from 'crypto';
 
 jest.mock('load-esm');
 
-(loadEsm as jest.Mock).mockImplementation(async (pkg) => {
+(loadEsm as jest.Mock).mockImplementation(async (pkg: string) => {
   if (pkg === 'xxhash-wasm') {
     return {
       default: async () => ({

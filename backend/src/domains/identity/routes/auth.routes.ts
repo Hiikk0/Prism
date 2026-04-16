@@ -50,7 +50,7 @@ export default async function authRoutes(fastify: FastifyInstance, options: { jw
   fastify.post('/login', { schema: loginSchema }, authController.login.bind(authController));
   fastify.post('/reset-password', { schema: resetPasswordSchema }, authController.resetPassword.bind(authController));
   fastify.post('/guest-login', authController.guestLogin.bind(authController));
-  fastify.get('/me', { preHandler: [authMiddleware(options.jwtSecret)] }, authController.me.bind(authController));
+  fastify.get('/me', { preHandler: [authMiddleware()] }, authController.me.bind(authController));
   fastify.get('/settings', authController.getPublicSettings.bind(authController));
   fastify.post('/logout', authController.logout.bind(authController));
 }

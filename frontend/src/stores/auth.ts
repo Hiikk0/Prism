@@ -1,26 +1,11 @@
 import { defineStore } from 'pinia';
 import api from '@/api/api';
-
-export interface User {
-  id: string;
-  username: string;
-  role: 'guest' | 'user' | 'admin';
-  preferences?: {
-    backgroundType: 'waves' | 'image' | 'video' | 'none';
-    backgroundMediaId?: string;
-    performanceMode: 'high' | 'low';
-  };
-}
+import type { User, AuthResponse, LoginPayload, RegisterPayload } from '@/types/api';
 
 interface AuthState {
   user: User | null;
   loading: boolean;
   initialized: boolean;
-}
-
-export interface RegisterResponse {
-  user: User;
-  recoveryKey: string;
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -42,7 +27,7 @@ export const useAuthStore = defineStore('auth', {
         this.initialized = true;
       }
     },
-    async login(credentials: { username: string; password: string }) {
+    async login(credentials: LoginPayload) {
       this.loading = true;
       try {
         const { data } = await api.post('/auth/login', credentials);
@@ -54,7 +39,7 @@ export const useAuthStore = defineStore('auth', {
         this.loading = false;
       }
     },
-    async register(data: { username: string; password: string }): Promise<RegisterResponse> {
+    async register(data: RegisterPayload): Promise<AuthResponse> {
       this.loading = true;
       try {
         const { data: responseData } = await api.post('/auth/register', data);

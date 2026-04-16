@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import i18n from '@/i18n';
 import api from '@/api/api';
+import type { UpdateSettingsPayload } from '@/types/api';
 
 export const useSettingsStore = defineStore('settings', () => {
   // Localization
@@ -16,6 +17,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const mediaPath = ref('C:\\Media');
   const registrationEnabled = ref(true);
   const guestAccountEnabled = ref(true);
+  const usePolling = ref(false);
+  const pollingInterval = ref(100);
+  const scannerConcurrency = ref(2);
+  const scannerIoConcurrency = ref(10);
   const loading = ref(false);
 
   // Fetch from backend
@@ -26,6 +31,10 @@ export const useSettingsStore = defineStore('settings', () => {
       mediaPath.value = data.mediaRootDirectory;
       registrationEnabled.value = data.registrationEnabled;
       guestAccountEnabled.value = data.guestLoginEnabled;
+      usePolling.value = data.usePolling;
+      pollingInterval.value = data.pollingInterval;
+      scannerConcurrency.value = data.scannerConcurrency;
+      scannerIoConcurrency.value = data.scannerIoConcurrency;
     } catch (err) {
       console.warn('Failed to fetch system settings');
     } finally {
@@ -34,13 +43,17 @@ export const useSettingsStore = defineStore('settings', () => {
   };
 
   // Update backend
-  const updateSystemSettings = async (payload: any) => {
+  const updateSystemSettings = async (payload: UpdateSettingsPayload) => {
     loading.value = true;
     try {
       const { data } = await api.patch('/admin/settings', payload);
       if (data.mediaRootDirectory !== undefined) mediaPath.value = data.mediaRootDirectory;
       if (data.registrationEnabled !== undefined) registrationEnabled.value = data.registrationEnabled;
       if (data.guestLoginEnabled !== undefined) guestAccountEnabled.value = data.guestLoginEnabled;
+      if (data.usePolling !== undefined) usePolling.value = data.usePolling;
+      if (data.pollingInterval !== undefined) pollingInterval.value = data.pollingInterval;
+      if (data.scannerConcurrency !== undefined) scannerConcurrency.value = data.scannerConcurrency;
+      if (data.scannerIoConcurrency !== undefined) scannerIoConcurrency.value = data.scannerIoConcurrency;
     } catch (err) {
       console.error('Failed to update system settings');
       throw err;
@@ -83,6 +96,10 @@ export const useSettingsStore = defineStore('settings', () => {
     mediaPath,
     registrationEnabled,
     guestAccountEnabled,
+    usePolling,
+    pollingInterval,
+    scannerConcurrency,
+    scannerIoConcurrency,
     activeTheme,
     background,
     fontColor,

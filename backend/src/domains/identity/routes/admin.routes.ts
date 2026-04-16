@@ -6,12 +6,12 @@ import { SettingsRepository } from '../repositories/settings.repository';
 import { authMiddleware } from '@/shared/middleware/auth.middleware';
 import { rbacMiddleware } from '@/shared/middleware/rbac.middleware';
 
-export default async function adminRoutes(fastify: FastifyInstance, options: { jwtSecret: string }) {
+export default async function adminRoutes(fastify: FastifyInstance) {
   const adminController = new AdminController(
     new UserService(new UserRepository(), new SettingsRepository())
   );
 
-  const preHandlers = [authMiddleware(options.jwtSecret), rbacMiddleware(['admin'])];
+  const preHandlers = [authMiddleware(), rbacMiddleware(['admin'])];
 
   fastify.get('/settings', { preHandler: preHandlers }, adminController.getSettings.bind(adminController));
   fastify.patch('/settings', { preHandler: preHandlers }, adminController.updateSettings.bind(adminController));

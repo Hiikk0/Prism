@@ -8,10 +8,21 @@ import { Sema } from 'async-sema';
 
 import { SettingsRepository } from '../../identity/repositories/settings.repository';
 import { fileEvents } from '../../../shared/utils/event-bus';
+import type { FSWatcher } from 'chokidar';
+import type { queueAsPromised } from 'fastq';
+import { getErrorMessage } from '../../../shared/utils/error.util';
+
+interface DiskEntry {
+  fullPath: string;
+  relativePath: string;
+  size: number;
+  mtime: Date;
+  isFolder: boolean;
+}
 
 export class ScannerService {
-  private watcher: any = null;
-  private queue: any = null;
+  private watcher: FSWatcher | null = null;
+  private queue: queueAsPromised<string, void> | null = null;
   private ioSema: Sema | null = null;
   private ignoredPaths = new Set<string>();
 
@@ -41,7 +52,7 @@ export class ScannerService {
 
     // Configure Chokidar - ignoreInitial: true to handle scan manually
     this.watcher = chokidar.watch(this.mediaRoot, {
-      ignored: /(^|[\/\\])\../,
+      ignored: /(^|[/\\])\../,
       persistent: true,
       ignoreInitial: true, 
       depth: 20,
@@ -65,54 +76,39 @@ export class ScannerService {
   private async processTask(fileId: string): Promise<void> {
     try {
       await this.processor.processFile(fileId);
-    } catch (err) {
-      console.error(`SCANNER QUEUE ERROR for ${fileId}:`, err);
+    } catch (err: unknown) {
+      console.error(`SCANNER QUEUE ERROR for ${fileId}:`, getErrorMessage(err));
     }
   }
 
   async initialScan(): Promise<void> {
     console.log('WATCHER: Starting manual initial scan...');
     try {
-      // 1. Get all DB paths for comparison
-      const dbEntries = await this.repository.findAllPaths();
-      const dbPaths = Array.from(dbEntries.keys());
+      // 1. Scan disk
+      const diskEntries: DiskEntry[] = await this.scanDirectoryRecursive(this.mediaRoot);
       
-      // 2. Scan disk
-      const diskEntries = await this.scanDirectoryRecursive(this.mediaRoot);
-      const diskPaths = diskEntries.map(e => e.relativePath);
-      
-      const toInsert: any[] = [];
+      const toInsert: Record<string, unknown>[] = [];
       const toRemoveIds: string[] = [];
-      const toUpdate: { id: string, data: any }[] = [];
+      const toUpdate: { id: string, data: Record<string, unknown> }[] = [];
       const toProcessIds: string[] = [];
 
       // 3. Compare Disk vs DB
-      const dbPathSet = new Set(dbPaths);
       const diskPathMap = new Map(diskEntries.map(e => [e.relativePath, e]));
-
-      // Identify Deleted
-      for (const dbPath of dbPaths) {
-        if (!diskPathMap.has(dbPath)) {
-          // Find the actual document to get ID (though internal repo might need a special findByPath if we don't have IDs in map)
-          // For simplicity in this logic, we might need IDs in findAllPaths map
-        }
-      }
       
       // We need IDs in our Map to actually delete/update
       // Let's assume repository.findAllPaths returns { id, hash, size, modifiedAt }
-      // Wait, let's fix the repository lookup to include IDs
       const dbFullEntries = await this.repository.findAllPaths(); 
 
       // Deleted files
       for (const [path, entry] of dbFullEntries) {
         if (!diskPathMap.has(path)) {
-          toRemoveIds.push((entry as any).id);
+          toRemoveIds.push(entry.id);
         }
       }
 
       // New or Changed files
       for (const diskEntry of diskEntries) {
-        const dbEntry: any = dbFullEntries.get(diskEntry.relativePath);
+        const dbEntry = dbFullEntries.get(diskEntry.relativePath);
         
         if (!dbEntry) {
           // NEW
@@ -184,18 +180,18 @@ export class ScannerService {
       // (Simplified: we should ideally get IDs of new docs, but for now runtime watcher or future scan will pick them up if needed)
       // Actually let's push the updated ones at least
       for (const id of toProcessIds) {
-        this.queue.push(id);
+        this.queue?.push(id);
       }
 
       console.log(`WATCHER: Initial scan complete. Total processed: ${diskEntries.length} files/folders.`);
 
-    } catch (err) {
-      console.error('WATCHER: Initial scan error:', err);
+    } catch (err: unknown) {
+      console.error('WATCHER: Initial scan error:', getErrorMessage(err));
     }
   }
 
-  private async scanDirectoryRecursive(dir: string): Promise<any[]> {
-    const results: any[] = [];
+  private async scanDirectoryRecursive(dir: string): Promise<DiskEntry[]> {
+    const results: DiskEntry[] = [];
     const list = await fs.readdir(dir);
     for (const file of list) {
         const fullPath = path.join(dir, file);
@@ -205,6 +201,9 @@ export class ScannerService {
         await this.ioSema?.acquire();
         try {
             stats = await fs.stat(fullPath);
+        } catch (err: unknown) {
+            console.warn(`WATCHER: Skipping inaccessible path: ${fullPath} - ${getErrorMessage(err)}`);
+            continue;
         } finally {
             this.ioSema?.release();
         }
@@ -256,7 +255,7 @@ export class ScannerService {
           hash,
           modifiedAt: stats.mtime
         });
-        this.queue.push(existing._id.toString());
+        this.queue?.push(existing._id.toString());
       } else {
         const mediaFile = await this.repository.create({
           originalName: path.basename(resolvedPath),
@@ -268,13 +267,13 @@ export class ScannerService {
           modifiedAt: stats.mtime,
           uploadedBy: this.systemUserId
         });
-        this.queue.push(mediaFile._id.toString());
+        this.queue?.push(mediaFile._id.toString());
       }
       
       // Notify clients to refresh
       fileEvents.emit('fs_change');
-    } catch (err) {
-      console.error(`ERROR in handleAdd for ${filePath}:`, err);
+    } catch (err: unknown) {
+      console.error(`ERROR in handleAdd for ${filePath}:`, getErrorMessage(err));
     }
   }
 
@@ -289,8 +288,8 @@ export class ScannerService {
         console.log(`WATCHER: Removed ${relativePath}`);
         fileEvents.emit('fs_change');
       }
-    } catch (err) {
-      console.error(`ERROR in handleRemove for ${filePath}:`, err);
+    } catch (err: unknown) {
+      console.error(`ERROR in handleRemove for ${filePath}:`, getErrorMessage(err));
     }
   }
 
@@ -346,7 +345,7 @@ export class ScannerService {
 
   private mimeFromExtension(filename: string): string {
     const ext = path.extname(filename).toLowerCase();
-    const map: any = {
+    const map: Record<string, string> = {
       '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.mp3': 'audio/mpeg',
       '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'
     };

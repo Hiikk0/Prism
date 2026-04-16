@@ -1,17 +1,26 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface IMediaMetadata {
+  duration?: number;
+  artist?: string;
+  title?: string;
+  album?: string;
+  resolution?: string;
+  thumbnailPath?: string;
+}
+
 export interface IMediaFile extends Document {
   originalName: string;
   savedName: string;
   path: string;
   mimeType: string;
   size: number;
-  uploadedBy: mongoose.Types.ObjectId;
-  parentId?: mongoose.Types.ObjectId;
+  uploadedBy: mongoose.Types.ObjectId | string;
+  parentId?: mongoose.Types.ObjectId | string | null;
   isFolder: boolean;
   tags?: string[];
   hash?: string;
-  metadata?: any;
+  metadata?: IMediaMetadata;
   modifiedAt?: Date;
   createdAt: Date;
 }

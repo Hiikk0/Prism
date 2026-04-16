@@ -1,12 +1,23 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { FileService } from '../services/file.service';
-import { MediaFileRepository } from '../repositories/mediafile.repository';
+import { validate } from '../../../shared/utils/validate';
+import { 
+  GetFilesQuerySchema, 
+  CreateFolderSchema, 
+  RenameFileSchema, 
+  RenameFileParamsSchema,
+  MoveFilesSchema,
+  UpdateTagsSchema, 
+  DeleteFilesSchema,
+  UploadQuerySchema
+} from '../schemas/file.schema';
+import { getErrorMessage } from '../../../shared/utils/error.util';
 
 export class FileController {
   constructor(private fileService: FileService) {}
 
   async getFiles(request: FastifyRequest, reply: FastifyReply) {
-    const { type, parentId, isFolder, search, skip, limit } = request.query as any;
+    const { type, parentId, isFolder, search, skip, limit } = validate(GetFilesQuerySchema, request.query);
     const files = await this.fileService.getFiles({ 
       type, 
       parentId, 
@@ -20,94 +31,99 @@ export class FileController {
 
   async uploadFile(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { parentId } = request.query as any;
-      const data = await (request as any).file();
+      const { parentId } = validate(UploadQuerySchema, request.query);
+      const data = await request.file();
       if (!data) {
         return reply.status(400).send({ error: 'No file uploaded' });
       }
 
-      const user = (request as any).user;
+      const user = request.user;
       const result = await this.fileService.uploadFile(data, user, parentId);
       return reply.status(201).send(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      return reply.status(500).send({ error: 'Internal Server Error' });
+      return reply.status(500).send({ error: `Internal Server Error: ${getErrorMessage(err)}` });
     }
   }
 
   async createFolder(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { name, parentId } = request.body as any;
-      const user = (request as any).user;
+      const { name, parentId } = validate(CreateFolderSchema, request.body);
+      const user = request.user;
       const result = await this.fileService.createFolder(name, parentId, user);
       return reply.status(201).send(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      return reply.status(500).send({ error: 'Internal Server Error' });
+      return reply.status(500).send({ error: `Internal Server Error: ${getErrorMessage(err)}` });
     }
   }
 
   async renameFile(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { id } = request.params as any;
-      const { originalName } = request.body as any;
-      const user = (request as any).user;
+      const { id } = validate(RenameFileParamsSchema, request.params);
+      const { originalName } = validate(RenameFileSchema, request.body);
+      const user = request.user;
       
       const result = await this.fileService.renameFile(id, originalName, user);
       return reply.send(result);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Rename error:', err);
-      if (err.message === 'File not found') return reply.status(404).send({ error: 'File not found' });
-      if (err.message.includes('Forbidden')) return reply.status(403).send({ error: 'Forbidden' });
-      return reply.status(500).send({ error: `Internal Server Error: ${err.message}` });
+      const message = getErrorMessage(err);
+      if (message === 'File not found') return reply.status(404).send({ error: 'File not found' });
+      if (message.includes('Forbidden')) return reply.status(403).send({ error: 'Forbidden' });
+      return reply.status(500).send({ error: `Internal Server Error: ${message}` });
     }
   }
 
   async moveFiles(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { ids, targetParentId } = request.body as any;
-      const user = (request as any).user;
+      const { ids, targetParentId } = validate(MoveFilesSchema, request.body);
+      const user = request.user;
       await this.fileService.moveFiles(ids, targetParentId, user);
       return reply.status(204).send();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Move error:', err);
-      if (err.message.includes('busy')) return reply.status(400).send({ error: 'File or folder is busy' });
-      return reply.status(500).send({ error: `Internal Server Error: ${err.message}` });
+      const message = getErrorMessage(err);
+      if (message.includes('busy')) return reply.status(400).send({ error: 'File or folder is busy' });
+      return reply.status(500).send({ error: `Internal Server Error: ${message}` });
     }
   }
 
   async updateTags(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { ids, tags } = request.body as any;
-      const user = (request as any).user;
+      const { ids, tags } = validate(UpdateTagsSchema, request.body);
+      const user = request.user;
       await this.fileService.updateTags(ids, tags, user);
       return reply.status(204).send();
-    } catch (err: any) {
-      return reply.status(500).send({ error: 'Internal Server Error' });
+    } catch (err: unknown) {
+      console.error('Update tags error:', err);
+      return reply.status(500).send({ error: `Internal Server Error: ${getErrorMessage(err)}` });
     }
   }
 
   async deleteFiles(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { ids } = request.body as any;
-      const user = (request as any).user;
+      const { ids } = validate(DeleteFilesSchema, request.body);
+      const user = request.user;
       await this.fileService.deleteFiles(ids, user);
       return reply.status(204).send();
-    } catch (err: any) {
-      return reply.status(500).send({ error: 'Internal Server Error' });
+    } catch (err: unknown) {
+      console.error('Delete files error:', err);
+      return reply.status(500).send({ error: `Internal Server Error: ${getErrorMessage(err)}` });
     }
   }
 
   async scanDirectory(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const scanner = (request.server as any).scanner;
+      const scanner = request.server.scanner;
       if (!scanner) {
         return reply.status(500).send({ error: 'Scanner service not initialized' });
       }
       await scanner.initialScan();
       return reply.send({ message: 'Scan started' });
-    } catch (err: any) {
-      return reply.status(500).send({ error: 'Failed to trigger scan' });
+    } catch (err: unknown) {
+      console.error('Scan error:', err);
+      return reply.status(500).send({ error: `Failed to trigger scan: ${getErrorMessage(err)}` });
     }
   }
 }
