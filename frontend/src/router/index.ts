@@ -24,6 +24,18 @@ const router = createRouter({
       component: () => import('@/views/FileManagerView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/player/:id',
+      name: 'player',
+      component: () => import('@/views/MediaPlayerView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/player/lists/:type',
+      name: 'player-lists',
+      component: () => import('@/views/PlayerListsView.vue'),
+      meta: { requiresAuth: true },
+    },
   ],
 });
 

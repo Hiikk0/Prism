@@ -42,7 +42,10 @@ describe('MediaFile Model (Unit)', () => {
       metadata: {
         duration: 9720,
         resolution: '1920x1080',
-        thumbnailPath: '.cache/thumbnails/123-avatar.jpg'
+        thumbnailPath: '.cache/thumbnails/123-avatar.jpg',
+        subtitles: [
+          { language: 'en', path: '.cache/subtitles/123-avatar-en.vtt', label: 'English' }
+        ]
       }
     };
 
@@ -56,6 +59,8 @@ describe('MediaFile Model (Unit)', () => {
     expect(mediaFile.metadata?.duration).toBe(9720);
     expect(mediaFile.metadata?.thumbnailPath).toBe('.cache/thumbnails/123-avatar.jpg');
     expect(mediaFile.metadata?.resolution).toBe('1920x1080');
+    expect(mediaFile.metadata?.subtitles).toHaveLength(1);
+    expect(mediaFile.metadata?.subtitles?.[0].language).toBe('en');
   });
 
   it('should successfully save a file without optional phase 3 fields', async () => {

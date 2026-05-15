@@ -14,7 +14,13 @@ describe('MediaProcessorService', () => {
 
     beforeEach(() => {
         mockRepo = new MediaFileRepository() as jest.Mocked<MediaFileRepository>;
-        mediaProcessorService = new MediaProcessorService(mockRepo, 'C:/media', 'C:/media/.cache/thumbnails');
+        mediaProcessorService = new MediaProcessorService(
+          mockRepo, 
+          'C:/media', 
+          'C:/media/.cache/thumbnails', 
+          'C:/media/.cache/preview', 
+          'C:/media/.cache/subtitles'
+        );
         
         mockMm = {
             parseFile: jest.fn()
@@ -88,6 +94,55 @@ describe('MediaProcessorService', () => {
             metadata: expect.objectContaining({
                 duration: 3600,
                 resolution: '1920x1080'
+            })
+        }));
+    });
+
+    it('should extract subtitles from video if subtitle stream exists', async () => {
+        const mockFfprobeData = {
+            format: { duration: 3600 },
+            streams: [
+                { index: 0, codec_type: 'video', width: 1920, height: 1080 },
+                { index: 1, codec_type: 'subtitle', tags: { language: 'eng', title: 'English' } },
+                { index: 2, codec_type: 'subtitle', tags: { language: 'ukr', title: 'Ukrainian' } }
+            ]
+        };
+        
+        (ffmpeg.ffprobe as unknown as jest.Mock).mockImplementation((path, cb) => {
+            cb(null, mockFfprobeData);
+        });
+
+        const mockFfmpegInstance = {
+            on: jest.fn().mockReturnThis(),
+            screenshots: jest.fn().mockReturnThis(),
+            output: jest.fn().mockReturnThis(),
+            outputOptions: jest.fn().mockReturnThis(),
+            run: jest.fn()
+        };
+        (ffmpeg as unknown as jest.Mock).mockReturnValue(mockFfmpegInstance);
+        mockFfmpegInstance.on.mockImplementation((event, cb) => {
+            if (event === 'end') cb();
+            return mockFfmpegInstance;
+        });
+
+        mockRepo.findById.mockResolvedValue({ 
+            _id: 'file3', 
+            mimeType: 'video/mkv', 
+            path: 'movie.mkv', 
+            savedName: 'movie.mkv' 
+        } as any);
+
+        await mediaProcessorService.processFile('file3');
+
+        // It should call ffmpeg for subtitles extraction
+        // In our implementation, we'll expect ffmpeg to be called twice (once for screenshots, once for subtitles, or combined)
+        // Let's assume we do it sequentially or use one command. It's easier sequentially for the test.
+        expect(mockRepo.update).toHaveBeenCalledWith('file3', expect.objectContaining({
+            metadata: expect.objectContaining({
+                subtitles: [
+                    { language: 'eng', label: 'English', path: expect.stringContaining('.vtt') },
+                    { language: 'ukr', label: 'Ukrainian', path: expect.stringContaining('.vtt') }
+                ]
             })
         }));
     });

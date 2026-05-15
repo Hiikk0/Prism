@@ -7,6 +7,7 @@ export const GetFilesQuerySchema = z.object({
   search: z.string().optional(),
   skip: z.string().regex(/^\d+$/).optional(),
   limit: z.string().regex(/^\d+$/).optional(),
+  sortBy: z.enum(['name', 'recent']).optional(),
 });
 
 export const UploadQuerySchema = z.object({

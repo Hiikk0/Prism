@@ -5,10 +5,12 @@ import authRoutes from './domains/identity/routes/auth.routes';
 import adminRoutes from './domains/identity/routes/admin.routes';
 import userRoutes from './domains/identity/routes/user.routes';
 import fileRoutes from './domains/filesystem/routes/file.routes';
+import playerRoutes from './domains/player/routes/player.routes';
 import fastifyJwt from '@fastify/jwt';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyCors from '@fastify/cors';
 import fastifyRateLimit from '@fastify/rate-limit';
+import fastifySwagger from '@fastify/swagger';
 import path from 'path';
 
 export function buildApp(opts = {}) {
@@ -18,6 +20,25 @@ export function buildApp(opts = {}) {
   const defaultMediaRoot = process.env.MEDIA_ROOT_DIRECTORY || path.join(__dirname, '../media');
 
   // Register Plugins
+  app.register(fastifySwagger, {
+    openapi: {
+      info: {
+        title: 'Prism Media Server API',
+        description: 'Automated API documentation generated from Fastify schemas',
+        version: '1.0.0'
+      },
+      components: {
+        securitySchemes: {
+          cookieAuth: {
+            type: 'apiKey',
+            in: 'cookie',
+            name: 'token'
+          }
+        }
+      }
+    }
+  });
+
   app.register(fastifyCookie, {
     secret: jwtSecret,
     parseOptions: {}
@@ -61,6 +82,8 @@ export function buildApp(opts = {}) {
 
   // File Routes now need to be handled carefully with dynamic media root
   app.register(fileRoutes, { prefix: '/api/files', jwtSecret, mediaRoot: defaultMediaRoot });
+  
+  app.register(playerRoutes, { prefix: '/api/player', jwtSecret });
 
   // Add Health Check for Playwright/Uptime
   app.get('/api/health', async () => {

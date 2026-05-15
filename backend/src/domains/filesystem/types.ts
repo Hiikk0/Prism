@@ -21,6 +21,7 @@ export interface FileFilters {
   hash?: string;
   skip?: number;
   limit?: number;
+  sortBy?: 'name' | 'recent';
 }
 
 // Internal filter shape after parentId resolution
@@ -32,4 +33,5 @@ export interface ResolvedFileFilters {
   hash?: string;
   skip?: number;
   limit?: number;
+  sortBy?: 'name' | 'recent';
 }

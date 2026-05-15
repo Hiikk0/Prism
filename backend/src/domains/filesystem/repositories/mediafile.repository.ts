@@ -7,8 +7,8 @@ export class MediaFileRepository {
     return mediaFile.save();
   }
 
-  async createMany(data: Partial<IMediaFile>[]): Promise<void> {
-    await MediaFileModel.insertMany(data);
+  async createMany(data: Partial<IMediaFile>[]): Promise<IMediaFile[]> {
+    return MediaFileModel.insertMany(data) as any;
   }
 
   async findById(id: string): Promise<IMediaFile | null> {
@@ -19,11 +19,18 @@ export class MediaFileRepository {
     return MediaFileModel.findOne({ path: filePath }).exec();
   }
 
-  async findAllPaths(): Promise<Map<string, { id: string, hash?: string, size: number, modifiedAt?: Date }>> {
-    const files = await MediaFileModel.find({}, { path: 1, hash: 1, size: 1, modifiedAt: 1 }).lean().exec();
-    const map = new Map<string, { id: string, hash?: string, size: number, modifiedAt?: Date }>();
+  async findAllPaths(): Promise<Map<string, { id: string, hash?: string, size: number, modifiedAt?: Date, mimeType: string, metadata?: any }>> {
+    const files = await MediaFileModel.find({}, { path: 1, hash: 1, size: 1, modifiedAt: 1, mimeType: 1, metadata: 1 }).lean().exec();
+    const map = new Map<string, { id: string, hash?: string, size: number, modifiedAt?: Date, mimeType: string, metadata?: any }>();
     for (const f of files) {
-      map.set(f.path, { id: f._id.toString(), hash: f.hash, size: f.size, modifiedAt: f.modifiedAt });
+      map.set(f.path, { 
+        id: f._id.toString(), 
+        hash: f.hash, 
+        size: f.size, 
+        modifiedAt: f.modifiedAt, 
+        mimeType: f.mimeType,
+        metadata: f.metadata
+      });
     }
     return map;
   }
@@ -101,7 +108,12 @@ export class MediaFileRepository {
 
     const total = await MediaFileModel.countDocuments(query).exec();
     
-    let dbQuery = MediaFileModel.find(query).sort({ isFolder: -1, originalName: 1 });
+    let sortObj: any = { isFolder: -1, originalName: 1 };
+    if (filters.sortBy === 'recent') {
+      sortObj = { createdAt: -1 };
+    }
+    
+    let dbQuery = MediaFileModel.find(query).sort(sortObj);
     
     if (filters.skip !== undefined) {
       dbQuery = dbQuery.skip(filters.skip);

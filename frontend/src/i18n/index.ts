@@ -64,6 +64,7 @@ const messages = {
       user: 'Profile',
       settings: 'Settings',
       'file-manager': 'File Manager',
+      player: 'Player',
       video: 'Videos',
       music: 'Music',
       image: 'Photos'
@@ -72,6 +73,11 @@ const messages = {
       view: 'View Profile',
       change_username: 'Change Username',
       change_password: 'Change Password'
+    },
+    player: {
+      recent: 'Recently Added',
+      playlists: 'Playlists',
+      continue: 'Continue Watching'
     }
   },
   uk: {
@@ -137,6 +143,7 @@ const messages = {
       user: 'Профіль',
       settings: 'Налаштування',
       'file-manager': 'Файловий менеджер',
+      player: 'Програвач',
       video: 'Відео',
       music: 'Музика',
       image: 'Фото'
@@ -145,6 +152,11 @@ const messages = {
       view: 'Переглянути профіль',
       change_username: 'Змінити ім\'я',
       change_password: 'Змінити пароль'
+    },
+    player: {
+      recent: 'Нещодавно додані',
+      playlists: 'Плейлисти',
+      continue: 'Продовжити перегляд'
     }
   },
 };

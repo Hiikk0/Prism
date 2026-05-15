@@ -7,6 +7,12 @@ export interface IMediaMetadata {
   album?: string;
   resolution?: string;
   thumbnailPath?: string;
+  previewPath?: string;
+  subtitles?: Array<{
+    language: string;
+    path: string;
+    label: string;
+  }>;
 }
 
 export interface IMediaFile extends Document {

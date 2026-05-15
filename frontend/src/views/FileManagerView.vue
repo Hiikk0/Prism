@@ -24,7 +24,8 @@ import {
   ChevronRight,
   Move,
   Type,
-  RefreshCw
+  RefreshCw,
+  ListMusic
 } from 'lucide-vue-next';
 import { useAuthStore } from '@/stores/auth';
 import FolderPickerModal from '@/components/common/FolderPickerModal.vue';
@@ -53,8 +54,31 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const isScanning = ref(false);
 let eventSource: EventSource | null = null;
 
+// Preview State
+const activePreviewId = ref<string | null>(null);
+let previewTimeout: any = null;
+
+const startPreview = (id: string) => {
+  if (previewTimeout) clearTimeout(previewTimeout);
+  if (activePreviewId.value === id) return;
+  previewTimeout = setTimeout(() => {
+    activePreviewId.value = id;
+  }, 500);
+};
+
+const stopPreview = () => {
+  if (previewTimeout) clearTimeout(previewTimeout);
+  activePreviewId.value = null;
+};
+
 // MIME type filter from route
 const filterType = computed(() => route.query.type as string || 'all');
+
+// Watch for focus changes
+watch(focusedItemId, (newId) => {
+  if (newId) startPreview(newId);
+  else stopPreview();
+});
 
 // Virtual Scrolling State
 const scrollContainer = ref<HTMLElement | null>(null);
@@ -353,6 +377,32 @@ const scanDirectory = async () => {
   }
 };
 
+const addToPlaylist = async (mediaIds: string[]) => {
+  try {
+    const { data: playlists } = await api.get('/player/playlists');
+    if (playlists.length === 0) {
+      const name = prompt('No playlists found. Enter name for new playlist:');
+      if (!name) return;
+      const { data: newPlaylist } = await api.post('/player/playlists', { name });
+      await api.post(`/player/playlists/${newPlaylist._id}/items`, { mediaIds });
+      alert('Playlist created and item added');
+      return;
+    }
+    
+    const list = playlists.map((p: any, i: number) => `${i + 1}. ${p.name}`).join('\n');
+    const choice = prompt(`Select Playlist (1-${playlists.length}):\n${list}`);
+    if (!choice) return;
+    
+    const idx = parseInt(choice) - 1;
+    if (idx >= 0 && idx < playlists.length) {
+      await api.post(`/player/playlists/${playlists[idx]._id}/items`, { mediaIds });
+      alert('Added to playlist');
+    }
+  } catch (err) {
+    alert('Failed to add to playlist');
+  }
+};
+
 const updateTags = async (ids: string[], currentTags: string[]) => {
   const newTags = prompt(t('files.tag_edit') + ' (comma separated):', currentTags.join(', '));
   if (newTags === null) return;
@@ -387,6 +437,7 @@ const pollGamepad = () => {
       if (activeItem.value) {
         if (isMultiSelectMode.value) toggleSelect(activeItem.value._id);
         else if (activeItem.value.isFolder) navigateToFolder(activeItem.value);
+        else router.push({ name: 'player', params: { id: activeItem.value._id } });
       }
     }
     
@@ -423,6 +474,13 @@ const handleKeydown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') goBack();
   if (e.key === 's' || e.key === 'S') isMultiSelectMode.value = !isMultiSelectMode.value;
   if (e.key === 'i' || e.key === 'I') showInfoPanel.value = !showInfoPanel.value;
+  if (e.key === 'Enter') {
+    if (activeItem.value) {
+      if (isMultiSelectMode.value) toggleSelect(activeItem.value._id);
+      else if (activeItem.value.isFolder) navigateToFolder(activeItem.value);
+      else router.push({ name: 'player', params: { id: activeItem.value._id } });
+    }
+  }
   
   const currentIndex = items.value.findIndex(i => i._id === focusedItemId.value);
   if (e.key === 'ArrowDown') {
@@ -621,7 +679,9 @@ const formatSize = (bytes: number) => {
             <div 
               v-if="item.data"
               @click="isMultiSelectMode ? toggleSelect(item.data._id) : focusedItemId = item.data._id"
-              @dblclick="navigateToFolder(item.data)"
+              @dblclick="item.data.isFolder ? navigateToFolder(item.data) : router.push({ name: 'player', params: { id: item.data._id } })"
+              @mouseenter="startPreview(item.data._id)"
+              @mouseleave="stopPreview"
               class="group relative cursor-pointer h-full"
               :class="{
                 'aero-card flex flex-col p-4 transition-all duration-300 hover:scale-105 active:scale-95 overflow-hidden': viewMode === 'grid',
@@ -641,12 +701,24 @@ const formatSize = (bytes: number) => {
                 </div>
               </div>
 
-              <!-- Icon Wrapper -->
               <div :class="{
-                'h-32 bg-white/5 rounded-2xl flex items-center justify-center mb-3 transition-all group-hover:bg-white/10 shadow-inner overflow-hidden': viewMode === 'grid',
-                'w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center shrink-0': viewMode === 'list'
+                'h-32 bg-white/5 rounded-2xl flex items-center justify-center mb-3 transition-all group-hover:bg-white/10 shadow-inner overflow-hidden relative': viewMode === 'grid',
+                'w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center shrink-0 overflow-hidden relative': viewMode === 'list'
               }">
-                <component :is="getFileIcon(item.data)" :size="viewMode === 'grid' ? 42 : 24" class="transition-transform duration-500 group-hover:scale-110" :class="item.data.isFolder ? 'text-blue-400' : 'text-white/60'" />
+                <template v-if="item.data.metadata?.thumbnailPath">
+                  <img 
+                    :src="`/api/files/${item.data._id}/thumbnail`" 
+                    class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
+                  />
+                  <transition name="fade">
+                    <img 
+                      v-if="activePreviewId === item.data._id && (item.data.mimeType.startsWith('video') || item.data.mimeType === 'image/gif')"
+                      :src="`/api/files/${item.data._id}/preview`" 
+                      class="absolute inset-0 w-full h-full object-cover z-10" 
+                    />
+                  </transition>
+                </template>
+                <component v-else :is="getFileIcon(item.data)" :size="viewMode === 'grid' ? 42 : 24" class="transition-transform duration-500 group-hover:scale-110" :class="item.data.isFolder ? 'text-blue-400' : 'text-white/60'" />
               </div>
 
               <!-- Meta -->
@@ -665,6 +737,7 @@ const formatSize = (bytes: number) => {
               <div v-if="viewMode === 'grid' && !isMultiSelectMode" class="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-all rounded-3xl flex items-end justify-center pb-4 gap-2">
                 <button @click.stop="renameItem(item.data)" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all" :title="t('files.rename')"><Type :size="16" /></button>
                 <button @click.stop="navigateToFolder(item.data)" v-if="item.data.isFolder" class="p-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500 hover:text-white rounded-xl transition-all"><ChevronRight :size="16" /></button>
+                <button v-if="!item.data.isFolder" @click.stop="addToPlaylist([item.data._id])" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all" title="Add to Playlist"><ListMusic :size="16" /></button>
                 <button @click.stop="selectedIds.add(item.data._id); isMultiSelectMode = true" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"><CheckSquare :size="16" /></button>
               </div>
             </div>
@@ -707,7 +780,12 @@ const formatSize = (bytes: number) => {
 
         <div v-if="activeItem" class="flex-1 overflow-y-auto px-8 pb-12 z-10 custom-scrollbar">
           <div class="aspect-square bg-white/5 rounded-3xl flex items-center justify-center mb-8 shadow-inner group overflow-hidden relative">
-            <component :is="getFileIcon(activeItem)" :size="80" class="text-blue-400 transition-transform duration-700 group-hover:scale-110" />
+            <img 
+              v-if="activeItem.metadata?.thumbnailPath" 
+              :src="activePreviewId === activeItem._id ? `/api/files/${activeItem._id}/preview` : `/api/files/${activeItem._id}/thumbnail`" 
+              class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
+            />
+            <component v-else :is="getFileIcon(activeItem)" :size="80" class="text-blue-400 transition-transform duration-700 group-hover:scale-110" />
             <div class="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
           </div>
 
@@ -757,7 +835,7 @@ const formatSize = (bytes: number) => {
           <button @click="navigateToFolder(activeItem)" v-if="activeItem.isFolder" class="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl flex items-center justify-center gap-3 font-bold uppercase tracking-widest transition-all shadow-lg shadow-blue-600/30 active:scale-95">
             {{ t('files.open_folder') }} <ChevronRight :size="18" />
           </button>
-          <button v-else class="w-full py-4 bg-white/10 hover:bg-white/20 rounded-2xl flex items-center justify-center gap-3 font-bold uppercase tracking-widest transition-all active:scale-95 border border-white/10">
+          <button v-else @click="router.push({ name: 'player', params: { id: activeItem._id } })" class="w-full py-4 bg-white/10 hover:bg-white/20 rounded-2xl flex items-center justify-center gap-3 font-bold uppercase tracking-widest transition-all active:scale-95 border border-white/10">
             {{ t('files.preview_file') }}
           </button>
         </div>
@@ -841,5 +919,11 @@ const formatSize = (bytes: number) => {
 .list-enter-from, .list-leave-to {
   opacity: 0;
   transform: translateY(20px);
+}
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
 }
 </style>

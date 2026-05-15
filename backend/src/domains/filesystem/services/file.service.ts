@@ -16,7 +16,7 @@ export class FileService {
     private defaultMediaRoot: string
   ) {}
 
-  private async getMediaRoot(): Promise<string> {
+  async getMediaRoot(): Promise<string> {
     const settings = await this.settingsRepository.getSettings();
     return settings?.mediaRootDirectory || this.defaultMediaRoot;
   }
@@ -154,17 +154,17 @@ export class FileService {
   }
 
   async getFiles(filters: FileFilters = {}): Promise<{ items: IMediaFile[], total: number }> {
-    const queryFilters: Record<string, unknown> = { ...filters }; // repository needs internal shape
+    const queryFilters: any = { ...filters };
     if (filters.parentId !== undefined) {
       if (filters.parentId === 'root' || !filters.parentId) {
-        queryFilters.parentPath = null; // root level
+        queryFilters.parentPath = null;
       } else {
         const parent = await this.repository.findById(filters.parentId);
         if (parent) queryFilters.parentPath = parent.path;
       }
       delete queryFilters.parentId;
     }
-    return this.repository.findAll(queryFilters as Record<string, unknown>);
+    return this.repository.findAll(queryFilters);
   }
 
   async renameFile(id: string, newName: string, user: JwtUser): Promise<IMediaFile | null> {
@@ -328,5 +328,25 @@ export class FileService {
       
       await this.repository.delete(id);
     }
+  }
+
+  async getFileStreamData(id: string, user: JwtUser): Promise<{ physicalPath: string; size: number; mimeType: string }> {
+    const mediaFile = await this.repository.findById(id);
+    if (!mediaFile) throw new Error('File not found');
+
+    if (user.role !== 'admin' && mediaFile.uploadedBy.toString() !== user.id) {
+      // Anyone can read as per RBAC
+    }
+
+    const physicalPath = await this.getPhysicalPath(mediaFile);
+    return {
+      physicalPath,
+      size: mediaFile.size,
+      mimeType: mediaFile.mimeType
+    };
+  }
+
+  async getFileById(id: string): Promise<IMediaFile | null> {
+    return this.repository.findById(id);
   }
 }

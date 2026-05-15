@@ -12,21 +12,37 @@ import {
   UploadQuerySchema
 } from '../schemas/file.schema';
 import { getErrorMessage } from '../../../shared/utils/error.util';
+import fs from 'fs';
+import path from 'path';
 
 export class FileController {
   constructor(private fileService: FileService) {}
 
   async getFiles(request: FastifyRequest, reply: FastifyReply) {
-    const { type, parentId, isFolder, search, skip, limit } = validate(GetFilesQuerySchema, request.query);
+    const { type, parentId, isFolder, search, skip, limit, sortBy } = validate(GetFilesQuerySchema, request.query);
     const files = await this.fileService.getFiles({ 
       type, 
       parentId, 
       isFolder: isFolder === 'true' ? true : (isFolder === 'false' ? false : undefined), 
       search,
       skip: skip !== undefined ? parseInt(skip) : undefined,
-      limit: limit !== undefined ? parseInt(limit) : undefined
+      limit: limit !== undefined ? parseInt(limit) : undefined,
+      sortBy
     });
     return reply.send(files);
+  }
+
+  async getFile(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    try {
+      const { id } = request.params;
+      const file = await this.fileService.getFileById(id);
+      if (!file) {
+        return reply.status(404).send({ error: 'File not found' });
+      }
+      return reply.send(file);
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
   }
 
   async uploadFile(request: FastifyRequest, reply: FastifyReply) {
@@ -124,6 +140,115 @@ export class FileController {
     } catch (err: unknown) {
       console.error('Scan error:', err);
       return reply.status(500).send({ error: `Failed to trigger scan: ${getErrorMessage(err)}` });
+    }
+  }
+
+  async streamFile(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    try {
+      const { id } = request.params;
+      const user = request.user;
+      const { physicalPath, size, mimeType } = await this.fileService.getFileStreamData(id, user);
+
+      const range = request.headers.range;
+      if (!range) {
+        // No range requested, send the whole file
+        reply.header('Content-Length', size);
+        reply.header('Content-Type', mimeType);
+        return reply.send(fs.createReadStream(physicalPath));
+      }
+
+      // Parse Range
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : size - 1;
+
+      if (start >= size || end >= size) {
+        return reply.status(416).header('Content-Range', `bytes */${size}`).send();
+      }
+
+      const chunksize = (end - start) + 1;
+      const fileStream = fs.createReadStream(physicalPath, { start, end });
+
+      reply.header('Content-Range', `bytes ${start}-${end}/${size}`);
+      reply.header('Accept-Ranges', 'bytes');
+      reply.header('Content-Length', chunksize);
+      reply.header('Content-Type', mimeType);
+      return reply.status(206).send(fileStream);
+
+    } catch (err: unknown) {
+      console.error('Stream error:', err);
+      const message = getErrorMessage(err);
+      if (message === 'File not found') return reply.status(404).send({ error: 'File not found' });
+      return reply.status(500).send({ error: `Internal Server Error: ${message}` });
+    }
+  }
+
+  async getThumbnail(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    try {
+      const { id } = request.params;
+      const mediaFile = await this.fileService.getFileById(id);
+      if (!mediaFile) return reply.status(404).send({ error: 'File not found' });
+
+      const thumbnailPath = mediaFile.metadata?.thumbnailPath;
+      if (!thumbnailPath) {
+        return reply.status(404).send({ error: 'Thumbnail not available' });
+      }
+
+      const mediaRoot = await this.fileService.getMediaRoot();
+      const physicalPath = path.join(mediaRoot, thumbnailPath);
+      
+      const ext = path.extname(thumbnailPath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.png': 'image/png', '.gif': 'image/gif',
+        '.webp': 'image/webp'
+      };
+      const contentType = mimeMap[ext] || 'image/jpeg';
+
+      return reply.type(contentType).send(fs.createReadStream(physicalPath));
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
+  }
+
+  async getPreview(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    try {
+      const { id } = request.params;
+      const mediaFile = await this.fileService.getFileById(id);
+      if (!mediaFile) return reply.status(404).send({ error: 'File not found' });
+
+      const previewPath = mediaFile.metadata?.previewPath;
+      if (!previewPath) {
+        // Fallback to thumbnail if preview not available (e.g. for images)
+        return this.getThumbnail(request, reply);
+      }
+
+      const mediaRoot = await this.fileService.getMediaRoot();
+      const physicalPath = path.join(mediaRoot, previewPath);
+      
+      return reply.type('image/webp').send(fs.createReadStream(physicalPath));
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
+  }
+
+  async getSubtitle(request: FastifyRequest<{ Params: { id: string, index: string } }>, reply: FastifyReply) {
+    try {
+      const { id, index } = request.params;
+      const mediaFile = await this.fileService.getFileById(id);
+      if (!mediaFile) return reply.status(404).send({ error: 'File not found' });
+
+      const subtitles = mediaFile.metadata?.subtitles;
+      if (!subtitles || !subtitles[parseInt(index)]) {
+        return reply.status(404).send({ error: 'Subtitle not available' });
+      }
+
+      const mediaRoot = await this.fileService.getMediaRoot();
+      const physicalPath = path.join(mediaRoot, subtitles[parseInt(index)].path);
+      
+      return reply.type('text/vtt').send(fs.createReadStream(physicalPath));
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
     }
   }
 }

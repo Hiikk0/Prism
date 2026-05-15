@@ -17,6 +17,7 @@
     "axios": "^1.14.0",
     "lucide-vue-next": "^1.0.0",
     "pinia": "^3.0.4",
+    "shaka-player": "^5.1.4",
     "vue": "^3.5.30",
     "vue-i18n": "^11.3.0",
     "vue-router": "^5.0.4"
@@ -32,6 +33,7 @@
     "autoprefixer": "^10.4.27",
     "eslint": "^10.2.0",
     "eslint-plugin-vue": "^10.8.0",
+    "happy-dom": "^20.9.0",
     "jsdom": "^29.0.1",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.2",

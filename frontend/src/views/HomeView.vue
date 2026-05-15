@@ -19,7 +19,8 @@ import {
   Layout,
   Palette,
   Type,
-  Key
+  Key,
+  Play
 } from 'lucide-vue-next';
 
 const { t } = useI18n();
@@ -34,12 +35,13 @@ onMounted(async () => {
 });
 
 const categories = [
-  { id: 'user', icon: UserIcon, label: 'Profile' },
-  { id: 'settings', icon: SettingsIcon, label: 'Settings' },
-  { id: 'file-manager', icon: Folder, label: 'File Manager' },
+  { id: 'user', icon: UserIcon },
+  { id: 'settings', icon: SettingsIcon },
+  { id: 'file-manager', icon: Folder },
+  { id: 'player', icon: Play },
 ];
 
-const activeCategoryIndex = ref(2); // Default to Video
+const activeCategoryIndex = ref(2); // Default to File Manager
 
 // Map basic categories to full XMB Category structure
 const xmbCategories = computed(() => categories.map(cat => {
@@ -47,10 +49,16 @@ const xmbCategories = computed(() => categories.map(cat => {
   
   if (cat.id === 'file-manager') {
     items = [
-      { id: 'fm-all', label: () => t('files.all') || 'All', icon: Folder, type: 'all' },
-      { id: 'fm-video', label: () => t('categories.video') || 'Videos', icon: Video, type: 'video' },
-      { id: 'fm-music', label: () => t('categories.music') || 'Music', icon: Music, type: 'audio' },
-      { id: 'fm-photo', label: () => t('categories.image') || 'Photos', icon: ImageIcon, type: 'image' },
+      { id: 'files-all', label: () => t('files.all') || 'All Files', icon: Folder, type: 'all' },
+      { id: 'files-video', label: () => t('categories.video') || 'Videos', icon: Video, type: 'video' },
+      { id: 'files-music', label: () => t('categories.music') || 'Music', icon: Music, type: 'audio' },
+      { id: 'files-photo', label: () => t('categories.image') || 'Photos', icon: ImageIcon, type: 'image' },
+    ];
+  } else if (cat.id === 'player') {
+    items = [
+      { id: 'player-recent', label: () => t('player.recent') || 'Recently Added', icon: Folder, type: 'recent' },
+      { id: 'player-playlists', label: () => t('player.playlists') || 'Playlists', icon: Folder, type: 'playlists' },
+      { id: 'player-continue', label: () => t('player.continue') || 'Continue Watching', icon: Play, type: 'continue' },
     ];
   } else if (cat.id === 'user') {
     const baseItems: XmbItem[] = [
@@ -228,7 +236,7 @@ const xmbCategories = computed(() => categories.map(cat => {
 
   return {
     ...cat,
-    title: t(`categories.${cat.id}`) || cat.label,
+    title: t(`categories.${cat.id}`),
     items
   };
 }));
@@ -242,7 +250,11 @@ const openFiles = (item: XmbItem) => {
   if (item.onSelect) {
     item.onSelect();
   } else if (item.type) {
-    router.push({ name: 'files', query: { type: item.type } });
+    if (['recent', 'playlists', 'continue'].includes(item.type)) {
+      router.push({ name: 'player-lists', params: { type: item.type } });
+    } else {
+      router.push({ name: 'files', query: { type: item.type } });
+    }
   }
 };
 </script>

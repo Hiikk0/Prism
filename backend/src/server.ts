@@ -48,15 +48,26 @@ const start = async () => {
     }
 
     // Initialize Services
-    const thumbnailDir = path.join(mediaRoot, '.cache/thumbnails');
+    const actualMediaRoot = settings.mediaRootDirectory || mediaRoot;
+    const thumbnailDir = path.join(actualMediaRoot, '.cache/thumbnails');
+    const previewDir = path.join(actualMediaRoot, '.cache/preview');
+    const subtitleDir = path.join(actualMediaRoot, '.cache/subtitles');
     await mkdir(thumbnailDir, { recursive: true });
+    await mkdir(previewDir, { recursive: true });
+    await mkdir(subtitleDir, { recursive: true });
 
-    const processor = new MediaProcessorService(mediaRepo, mediaRoot, thumbnailDir);
-    const scanner = new ScannerService(mediaRepo, processor, settings.mediaRootDirectory, settingsRepo, systemUser._id.toString());
+    const processor = new MediaProcessorService(mediaRepo, actualMediaRoot, thumbnailDir, previewDir, subtitleDir);
+    const scanner = new ScannerService(mediaRepo, processor, actualMediaRoot, settingsRepo, systemUser._id.toString());
     
     await scanner.initialize();
     app.decorate('scanner', scanner);
     app.log.info('File watcher initialized');
+
+    // Initialize System Playlists
+    const { PlayerService } = await import('./domains/player/services/player.service');
+    const playerService = new PlayerService();
+    await playerService.ensureSystemPlaylists(systemUser._id.toString());
+    app.log.info('System playlists initialized');
 
     // Start server
     await app.listen({ port, host: '0.0.0.0' });

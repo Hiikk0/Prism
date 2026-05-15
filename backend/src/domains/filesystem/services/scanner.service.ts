@@ -131,10 +131,24 @@ export class ScannerService {
           }
         } else {
           // EXISTS - Check for changes
+          const expectedMime = diskEntry.isFolder ? 'inode/directory' : this.mimeFromExtension(diskEntry.fullPath);
           const mtimeChanged = dbEntry.modifiedAt?.getTime() !== diskEntry.mtime.getTime();
           const sizeChanged = dbEntry.size !== diskEntry.size;
+          const mimeChanged = dbEntry.mimeType !== expectedMime;
           
-          if (mtimeChanged || sizeChanged) {
+          // Force re-processing if thumbnails or previews are missing/incorrect
+          let needsReprocessing = false;
+          if (!diskEntry.isFolder) {
+            const hasProperThumb = dbEntry.metadata?.thumbnailPath?.startsWith('.cache/thumbnails');
+            const isVideo = expectedMime.startsWith('video');
+            const isGif = expectedMime === 'image/gif';
+            const hasPreview = dbEntry.metadata?.previewPath?.startsWith('.cache/preview');
+            
+            if (!hasProperThumb) needsReprocessing = true;
+            if ((isVideo || isGif) && !hasPreview) needsReprocessing = true;
+          }
+          
+          if (mtimeChanged || sizeChanged || mimeChanged || needsReprocessing) {
             await this.ioSema?.acquire();
             try {
               const hash = diskEntry.isFolder ? undefined : await generateFastHash(diskEntry.fullPath);
@@ -144,7 +158,8 @@ export class ScannerService {
                   size: diskEntry.size,
                   hash,
                   modifiedAt: diskEntry.mtime,
-                  originalName: path.basename(diskEntry.fullPath)
+                  originalName: path.basename(diskEntry.fullPath),
+                  mimeType: expectedMime
                 }
               });
               toProcessIds.push(dbEntry.id);
@@ -163,16 +178,22 @@ export class ScannerService {
 
       if (toInsert.length > 0) {
         // We need to keep track of inserted IDs to push them to processor queue
-        // InsertMany returns the inserted docs
-        // For now, let's just do them.
-        await this.repository.createMany(toInsert);
-        console.log(`WATCHER: Batch inserted ${toInsert.length} new entries.`);
+        const inserted = await this.repository.createMany(toInsert);
+        console.log(`WATCHER: Batch inserted ${inserted.length} new entries.`);
+        
+        // Add to processing queue
+        for (const doc of inserted) {
+          if (!doc.isFolder) {
+            this.queue?.push(doc._id.toString());
+          }
+        }
       }
 
       if (toUpdate.length > 0) {
         console.log(`WATCHER: Updating ${toUpdate.length} changed entries...`);
         for (const update of toUpdate) {
           await this.repository.update(update.id, update.data);
+          this.queue?.push(update.id);
         }
       }
 
@@ -239,10 +260,24 @@ export class ScannerService {
       const existing = await this.repository.findByPath(relativePath);
       
       if (existing) {
+        const expectedMime = this.mimeFromExtension(resolvedPath);
         const mtimeChanged = existing.modifiedAt?.getTime() !== stats.mtime.getTime();
         const sizeChanged = existing.size !== stats.size;
+        const mimeChanged = existing.mimeType !== expectedMime;
         
-        if (!mtimeChanged && !sizeChanged) {
+        // Force re-processing if thumbnails or previews are missing/incorrect
+        let needsReprocessing = false;
+        if (!existing.isFolder) {
+          const hasProperThumb = existing.metadata?.thumbnailPath?.startsWith('.cache/thumbnails');
+          const isVideo = expectedMime.startsWith('video');
+          const isGif = expectedMime === 'image/gif';
+          const hasPreview = existing.metadata?.previewPath?.startsWith('.cache/preview');
+          
+          if (!hasProperThumb) needsReprocessing = true;
+          if ((isVideo || isGif) && !hasPreview) needsReprocessing = true;
+        }
+        
+        if (!mtimeChanged && !sizeChanged && !mimeChanged && !needsReprocessing) {
           return; // No change
         }
       }
@@ -253,7 +288,8 @@ export class ScannerService {
         await this.repository.update(existing._id.toString(), {
           size: stats.size,
           hash,
-          modifiedAt: stats.mtime
+          modifiedAt: stats.mtime,
+          mimeType: this.mimeFromExtension(resolvedPath)
         });
         this.queue?.push(existing._id.toString());
       } else {
@@ -346,8 +382,9 @@ export class ScannerService {
   private mimeFromExtension(filename: string): string {
     const ext = path.extname(filename).toLowerCase();
     const map: Record<string, string> = {
-      '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.mp3': 'audio/mpeg',
-      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'
+      '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo', '.wmv': 'video/x-ms-wmv', '.flv': 'video/x-flv', '.webm': 'video/webm',
+      '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.flac': 'audio/flac', '.aac': 'audio/aac', '.ogg': 'audio/ogg',
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif'
     };
     return map[ext] || 'application/octet-stream';
   }

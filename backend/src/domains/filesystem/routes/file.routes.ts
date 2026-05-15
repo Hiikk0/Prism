@@ -18,6 +18,7 @@ export default async function fileRoutes(fastify: FastifyInstance, options: { jw
   const auth = authMiddleware();
 
   fastify.get('/', { preHandler: [auth] }, fileController.getFiles.bind(fileController));
+  fastify.get<{ Params: { id: string } }>('/:id', { preHandler: [auth] }, fileController.getFile.bind(fileController));
   
   // SSE endpoint for filesystem events
   fastify.get('/events', { preHandler: [auth] }, (req, reply) => {
@@ -60,4 +61,10 @@ export default async function fileRoutes(fastify: FastifyInstance, options: { jw
   fastify.patch('/tags', { preHandler: [auth, rbacMiddleware(['user', 'admin'])] }, fileController.updateTags.bind(fileController));
   fastify.delete('/', { preHandler: [auth, rbacMiddleware(['user', 'admin'])] }, fileController.deleteFiles.bind(fileController));
   fastify.post('/scan', { preHandler: [auth, rbacMiddleware(['admin'])] }, fileController.scanDirectory.bind(fileController));
+
+  // Player & Streaming routes
+  fastify.get<{ Params: { id: string } }>('/:id/stream', { preHandler: [auth] }, fileController.streamFile.bind(fileController));
+  fastify.get<{ Params: { id: string } }>('/:id/thumbnail', { preHandler: [auth] }, fileController.getThumbnail.bind(fileController));
+  fastify.get<{ Params: { id: string } }>('/:id/preview', { preHandler: [auth] }, fileController.getPreview.bind(fileController));
+  fastify.get<{ Params: { id: string, index: string } }>('/:id/subtitles/:index', { preHandler: [auth] }, fileController.getSubtitle.bind(fileController));
 }
