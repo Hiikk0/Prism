@@ -16,6 +16,9 @@ export interface AuthResponse {
 export interface PublicSettings {
   registrationEnabled: boolean;
   guestLoginEnabled: boolean;
+  transcodeMode: string;
+  hardwareEncoder: string;
+  targetQualities: number[];
 }
 
 export class AuthService {
@@ -137,14 +140,26 @@ export class AuthService {
 
     const tokens = this.generateTokens(guestUser, '1h'); // Short-lived for guests
     
+    const userObj = guestUser.toObject() as IUser;
+    const userWithoutSecrets: Partial<IUser> = { ...userObj };
+    delete userWithoutSecrets.passwordHash;
+    delete userWithoutSecrets.recoveryKeyHash;
+
     return {
-      user: {
-        _id: guestUser._id,
-        username: guestUsername,
-        role: 'guest'
-      } as AuthResponse['user'],
+      user: userWithoutSecrets as AuthResponse['user'],
       ...tokens
     };
+  }
+
+  async findUserById(id: string): Promise<Omit<IUser, 'passwordHash' | 'recoveryKeyHash'> | null> {
+    const user = await this.userRepository.findById(id);
+    if (!user) return null;
+
+    const userObj = user.toObject() as IUser;
+    const userWithoutSecrets: Partial<IUser> = { ...userObj };
+    delete userWithoutSecrets.passwordHash;
+    delete userWithoutSecrets.recoveryKeyHash;
+    return userWithoutSecrets as Omit<IUser, 'passwordHash' | 'recoveryKeyHash'>;
   }
 
   async getPublicSettings(): Promise<PublicSettings> {
@@ -152,6 +167,9 @@ export class AuthService {
     return {
       registrationEnabled: settings?.registrationEnabled ?? true,
       guestLoginEnabled: settings?.guestLoginEnabled ?? false,
+      transcodeMode: settings?.transcodeMode ?? 'OFF',
+      hardwareEncoder: settings?.hardwareEncoder ?? 'cpu',
+      targetQualities: settings?.targetQualities ?? [1080, 720, 480],
     };
   }
 

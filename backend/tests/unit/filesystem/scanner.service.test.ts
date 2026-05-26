@@ -27,8 +27,16 @@ describe('ScannerService', () => {
 
     beforeEach(() => {
         mockRepo = new MediaFileRepository() as jest.Mocked<MediaFileRepository>;
-        mockProcessor = new MediaProcessorService(mockRepo, MEDIA_ROOT, 'C:/th', 'C:/sub') as jest.Mocked<MediaProcessorService>;
         mockSettingsRepo = new SettingsRepository() as jest.Mocked<SettingsRepository>;
+        mockProcessor = new MediaProcessorService(
+            mockRepo,
+            mockSettingsRepo,
+            MEDIA_ROOT,
+            'C:/th',
+            'C:/pr',
+            'C:/sub',
+            'C:/wf'
+        ) as jest.Mocked<MediaProcessorService>;
 
         mockSettingsRepo.getSettings.mockResolvedValue({
             usePolling: false,

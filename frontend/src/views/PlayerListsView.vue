@@ -104,24 +104,24 @@ const fetchList = async () => {
 };
 
 const createPlaylist = async () => {
-  const name = prompt('Enter playlist name:');
+  const name = prompt(t('player.create_playlist_prompt') || 'Enter playlist name:');
   if (!name) return;
   try {
     await api.post('/player/playlists', { name });
     fetchList();
   } catch (err) {
-    alert('Failed to create playlist');
+    alert(t('player.failed_create_playlist') || 'Failed to create playlist');
   }
 };
 
 const deletePlaylist = async (id: string, event: Event) => {
   event.stopPropagation();
-  if (!confirm('Are you sure you want to delete this playlist?')) return;
+  if (!confirm(t('player.delete_playlist_confirm') || 'Are you sure you want to delete this playlist?')) return;
   try {
     await api.delete(`/player/playlists/${id}`);
     fetchList();
   } catch (err) {
-    alert('Failed to delete playlist');
+    alert(t('player.failed_delete_playlist') || 'Failed to delete playlist');
   }
 };
 
@@ -137,7 +137,7 @@ const deleteProgress = async (mediaId: string, event: Event) => {
 
 const deleteSelectedItems = async () => {
   if (selectedIds.value.size === 0) return;
-  if (!confirm(`Delete ${selectedIds.value.size} items from disk?`)) return;
+  if (!confirm(t('player.delete_selected_items_confirm', { count: selectedIds.value.size }) || `Delete ${selectedIds.value.size} items from disk?`)) return;
   
   try {
     loading.value = true;
@@ -218,7 +218,7 @@ const getTitle = () => {
   if (listType.value === 'continue') return t('player.continue') || 'Continue Watching';
   if (listType.value === 'playlists') return t('player.playlists') || 'Playlists';
   if (playlistData.value) return playlistData.value.name;
-  return 'List';
+  return t('player.playlists') || 'List';
 };
 </script>
 
@@ -235,7 +235,7 @@ const getTitle = () => {
             {{ getTitle() }}
           </h1>
           <span v-if="filteredItems.length > 0" class="text-xs font-mono text-white/30 ml-2">
-            {{ filteredItems.length }} ITEMS
+            {{ t('common.items', { count: filteredItems.length }) }}
           </span>
         </div>
 
@@ -246,7 +246,7 @@ const getTitle = () => {
             <input 
               v-model="searchQuery"
               type="text" 
-              :placeholder="t('files.search_placeholder') || 'Search files...'"
+              :placeholder="t('files.search')"
               class="w-full bg-white/5 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-sm font-light focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:bg-white/10 transition-all"
             />
             <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-4 top-1/2 -translate-y-1/2 text-white/20 hover:text-white transition-colors">
@@ -294,7 +294,7 @@ const getTitle = () => {
       
       <div v-else-if="filteredItems.length === 0" class="h-64 flex flex-col items-center justify-center text-gray-500 gap-4">
         <Folder :size="64" stroke-width="1" class="opacity-20" />
-        <p class="text-lg font-light tracking-widest uppercase">No items found</p>
+        <p class="text-lg font-light tracking-widest uppercase">{{ t('common.no_items') }}</p>
       </div>
 
       <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-6">
@@ -322,11 +322,19 @@ const getTitle = () => {
                   class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
                 />
                 <transition name="fade">
-                  <img 
-                    v-if="activePreviewId === item._id && (item.mimeType?.startsWith('video') || item.mimeType === 'image/gif')"
-                    :src="`/api/files/${item._id}/preview`" 
-                    class="absolute inset-0 w-full h-full object-cover z-10" 
-                  />
+                  <div v-if="activePreviewId === item._id" class="absolute inset-0 w-full h-full z-10">
+                    <video 
+                      v-if="item.mimeType?.startsWith('video')"
+                      :src="`/api/files/${item._id}/preview`" 
+                      autoplay loop muted playsinline
+                      class="w-full h-full object-cover" 
+                    />
+                    <img 
+                      v-else-if="item.mimeType === 'image/gif'"
+                      :src="`/api/files/${item._id}/preview`" 
+                      class="w-full h-full object-cover" 
+                    />
+                  </div>
                 </transition>
               </template>
               <template v-else>
@@ -375,7 +383,7 @@ const getTitle = () => {
                 {{ item.originalName || item.name }}
               </p>
               <div class="flex items-center justify-between mt-1 text-[10px] text-white/30 uppercase tracking-widest font-bold">
-                <span v-if="listType === 'playlists'">{{ item.mediaItems?.length || 0 }} ITEMS</span>
+                <span v-if="listType === 'playlists'">{{ t('common.items', { count: item.mediaItems?.length || 0 }) }}</span>
                 <span v-else>{{ formatSize(item.size) }}</span>
                 
                 <template v-if="item._progress">

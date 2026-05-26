@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { type XmbItem } from '@/composables/useXmbNavigation';
+import { useAuthStore } from '@/stores/auth';
 
 const props = defineProps<{
   items: XmbItem[];
@@ -10,6 +12,8 @@ const props = defineProps<{
 
 const emit = defineEmits(['select', 'update:active']);
 
+const authStore = useAuthStore();
+const isLowPerf = computed(() => authStore.user?.preferences?.performanceMode === 'low');
 </script>
 
 <template>
@@ -28,7 +32,7 @@ const emit = defineEmits(['select', 'update:active']);
       <div 
         class="absolute left-[-20px] w-full h-[54px] bg-white/10 rounded-lg pointer-events-none transition-opacity duration-300 z-0"
         :class="{ 'opacity-100': idx === activeIndex, 'opacity-0': idx !== activeIndex }"
-        style="backdrop-filter: blur(4px);"
+        :style="isLowPerf ? {} : { backdropFilter: 'blur(4px)' }"
       ></div>
 
       <!-- Item Icon -->

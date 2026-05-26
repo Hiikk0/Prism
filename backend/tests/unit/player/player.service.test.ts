@@ -31,14 +31,17 @@ describe('PlayerService', () => {
     it('should get user playlists', async () => {
       const mockPlaylists = [{ _id: 'p1', name: 'My List' }];
       (PlaylistModel.find as jest.Mock).mockReturnValue({
-        sort: jest.fn().mockReturnValue({
-          populate: jest.fn().mockResolvedValue(mockPlaylists)
-        })
+        sort: jest.fn().mockResolvedValue(mockPlaylists)
       });
 
       const result = await playerService.getUserPlaylists('user1');
 
-      expect(PlaylistModel.find).toHaveBeenCalledWith({ userId: 'user1' });
+      expect(PlaylistModel.find).toHaveBeenCalledWith({
+        $or: [
+          { userId: 'user1' },
+          { isSystem: true }
+        ]
+      });
       expect(result).toEqual(mockPlaylists);
     });
   });

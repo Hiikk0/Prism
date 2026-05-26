@@ -14,7 +14,7 @@ export default async function fileRoutes(fastify: FastifyInstance, options: { jw
     fastify.scanner!,
     options.mediaRoot
   );
-  const fileController = new FileController(fileService);
+  const fileController = new FileController(fileService, fastify.transcoder!);
   const auth = authMiddleware();
 
   fastify.get('/', { preHandler: [auth] }, fileController.getFiles.bind(fileController));
@@ -66,5 +66,12 @@ export default async function fileRoutes(fastify: FastifyInstance, options: { jw
   fastify.get<{ Params: { id: string } }>('/:id/stream', { preHandler: [auth] }, fileController.streamFile.bind(fileController));
   fastify.get<{ Params: { id: string } }>('/:id/thumbnail', { preHandler: [auth] }, fileController.getThumbnail.bind(fileController));
   fastify.get<{ Params: { id: string } }>('/:id/preview', { preHandler: [auth] }, fileController.getPreview.bind(fileController));
+  fastify.get<{ Params: { id: string } }>('/:id/waveform', { preHandler: [auth] }, fileController.getWaveform.bind(fileController));
+  fastify.get<{ Params: { id: string } }>('/:id/qualities', { preHandler: [auth] }, fileController.getAvailableQualities.bind(fileController));
+  fastify.get<{ Params: { id: string, quality: string } }>('/:id/hls/:quality/index.m3u8', { preHandler: [auth] }, fileController.getHlsManifest.bind(fileController));
+  fastify.get<{ Params: { id: string, quality: string, segment: string } }>('/:id/hls/:quality/:segment', { preHandler: [auth] }, fileController.getHlsSegment.bind(fileController));
+  fastify.delete<{ Params: { id: string } }>('/:id/hls', { preHandler: [auth] }, fileController.cleanupHls.bind(fileController));
+  // POST endpoint for navigator.sendBeacon() fallback (tab close / hard refresh)
+  fastify.post<{ Params: { id: string } }>('/:id/hls-cleanup', { preHandler: [auth] }, fileController.cleanupHlsBeacon.bind(fileController));
   fastify.get<{ Params: { id: string, index: string } }>('/:id/subtitles/:index', { preHandler: [auth] }, fileController.getSubtitle.bind(fileController));
 }

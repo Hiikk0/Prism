@@ -84,6 +84,19 @@ export class ScannerService {
   async initialScan(): Promise<void> {
     console.log('WATCHER: Starting manual initial scan...');
     try {
+      // 0. Cleanup any accidentally scanned .cache entries
+      const dbEntries = await this.repository.findAllPaths();
+      const toCleanup: string[] = [];
+      for (const [path, info] of dbEntries) {
+        if (path === '.cache' || path.startsWith('.cache/') || path.startsWith('.cache\\')) {
+          toCleanup.push(info.id);
+        }
+      }
+      if (toCleanup.length > 0) {
+        console.log(`WATCHER: Cleaning up ${toCleanup.length} .cache entries from DB`);
+        await this.repository.deleteMany(toCleanup);
+      }
+
       // 1. Scan disk
       const diskEntries: DiskEntry[] = await this.scanDirectoryRecursive(this.mediaRoot);
       
@@ -215,6 +228,8 @@ export class ScannerService {
     const results: DiskEntry[] = [];
     const list = await fs.readdir(dir);
     for (const file of list) {
+        if (file.startsWith('.')) continue; // Skip .cache and other hidden files/folders
+        
         const fullPath = path.join(dir, file);
         let stats;
         
@@ -270,11 +285,16 @@ export class ScannerService {
         if (!existing.isFolder) {
           const hasProperThumb = existing.metadata?.thumbnailPath?.startsWith('.cache/thumbnails');
           const isVideo = expectedMime.startsWith('video');
+          const isAudio = expectedMime.startsWith('audio');
           const isGif = expectedMime === 'image/gif';
           const hasPreview = existing.metadata?.previewPath?.startsWith('.cache/preview');
+          const isMp4Preview = existing.metadata?.previewPath?.endsWith('.mp4');
+          const hasWaveform = existing.metadata?.waveformPath?.startsWith('.cache/waveforms');
           
           if (!hasProperThumb) needsReprocessing = true;
-          if ((isVideo || isGif) && !hasPreview) needsReprocessing = true;
+          if (isVideo && (!hasPreview || !isMp4Preview)) needsReprocessing = true;
+          if (isGif && !hasPreview) needsReprocessing = true;
+          if ((isVideo || isAudio) && !hasWaveform) needsReprocessing = true;
         }
         
         if (!mtimeChanged && !sizeChanged && !mimeChanged && !needsReprocessing) {
@@ -371,6 +391,12 @@ export class ScannerService {
 
   private isIgnored(relativePath: string): boolean {
     const normalized = relativePath.split(path.sep).join('/');
+    
+    // Explicitly ignore .cache and other hidden files/folders
+    if (normalized === '.cache' || normalized.startsWith('.cache/') || normalized.startsWith('.cache\\')) {
+      return true;
+    }
+    
     for (const ignored of this.ignoredPaths) {
       if (normalized === ignored || normalized.startsWith(ignored + '/')) {
         return true;

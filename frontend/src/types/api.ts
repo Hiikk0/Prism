@@ -66,6 +66,10 @@ export interface SystemSettings {
   pollingInterval: number;
   scannerConcurrency: number;
   scannerIoConcurrency: number;
+  transcodeMode: 'JIT' | 'DISK' | 'OFF';
+  hardwareEncoder: string;
+  targetQualities: number[];
+  keepJitResumeCache: boolean;
   updatedAt?: string;
 }
 
@@ -77,5 +81,9 @@ export interface UpdateSettingsPayload {
   pollingInterval?: number;
   scannerConcurrency?: number;
   scannerIoConcurrency?: number;
+  transcodeMode?: 'JIT' | 'DISK' | 'OFF';
+  hardwareEncoder?: string;
+  targetQualities?: number[];
+  keepJitResumeCache?: boolean;
   createIfMissing?: boolean;
 }

@@ -381,25 +381,25 @@ const addToPlaylist = async (mediaIds: string[]) => {
   try {
     const { data: playlists } = await api.get('/player/playlists');
     if (playlists.length === 0) {
-      const name = prompt('No playlists found. Enter name for new playlist:');
+      const name = prompt(t('player.no_playlists_found') || 'No playlists found. Enter name for new playlist:');
       if (!name) return;
       const { data: newPlaylist } = await api.post('/player/playlists', { name });
       await api.post(`/player/playlists/${newPlaylist._id}/items`, { mediaIds });
-      alert('Playlist created and item added');
+      alert(t('player.playlist_created_added') || 'Playlist created and item added');
       return;
     }
     
     const list = playlists.map((p: any, i: number) => `${i + 1}. ${p.name}`).join('\n');
-    const choice = prompt(`Select Playlist (1-${playlists.length}):\n${list}`);
+    const choice = prompt(t('player.select_playlist_prompt', { max: playlists.length, list }) || `Select Playlist (1-${playlists.length}):\n${list}`);
     if (!choice) return;
     
     const idx = parseInt(choice) - 1;
     if (idx >= 0 && idx < playlists.length) {
       await api.post(`/player/playlists/${playlists[idx]._id}/items`, { mediaIds });
-      alert('Added to playlist');
+      alert(t('player.added_to_playlist') || 'Added to playlist');
     }
   } catch (err) {
-    alert('Failed to add to playlist');
+    alert(t('player.failed_add_to_playlist') || 'Failed to add to playlist');
   }
 };
 
@@ -711,11 +711,19 @@ const formatSize = (bytes: number) => {
                     class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
                   />
                   <transition name="fade">
-                    <img 
-                      v-if="activePreviewId === item.data._id && (item.data.mimeType.startsWith('video') || item.data.mimeType === 'image/gif')"
-                      :src="`/api/files/${item.data._id}/preview`" 
-                      class="absolute inset-0 w-full h-full object-cover z-10" 
-                    />
+                    <div v-if="activePreviewId === item.data._id" class="absolute inset-0 w-full h-full z-10">
+                      <video 
+                        v-if="item.data.mimeType.startsWith('video')"
+                        :src="`/api/files/${item.data._id}/preview`" 
+                        autoplay loop muted playsinline
+                        class="w-full h-full object-cover" 
+                      />
+                      <img 
+                        v-else-if="item.data.mimeType === 'image/gif'"
+                        :src="`/api/files/${item.data._id}/preview`" 
+                        class="w-full h-full object-cover" 
+                      />
+                    </div>
                   </transition>
                 </template>
                 <component v-else :is="getFileIcon(item.data)" :size="viewMode === 'grid' ? 42 : 24" class="transition-transform duration-500 group-hover:scale-110" :class="item.data.isFolder ? 'text-blue-400' : 'text-white/60'" />
@@ -737,7 +745,7 @@ const formatSize = (bytes: number) => {
               <div v-if="viewMode === 'grid' && !isMultiSelectMode" class="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-all rounded-3xl flex items-end justify-center pb-4 gap-2">
                 <button @click.stop="renameItem(item.data)" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all" :title="t('files.rename')"><Type :size="16" /></button>
                 <button @click.stop="navigateToFolder(item.data)" v-if="item.data.isFolder" class="p-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500 hover:text-white rounded-xl transition-all"><ChevronRight :size="16" /></button>
-                <button v-if="!item.data.isFolder" @click.stop="addToPlaylist([item.data._id])" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all" title="Add to Playlist"><ListMusic :size="16" /></button>
+                <button v-if="!item.data.isFolder" @click.stop="addToPlaylist([item.data._id])" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all" :title="t('player.add_to_playlist') || 'Add to Playlist'"><ListMusic :size="16" /></button>
                 <button @click.stop="selectedIds.add(item.data._id); isMultiSelectMode = true" class="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"><CheckSquare :size="16" /></button>
               </div>
             </div>

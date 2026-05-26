@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { useAuthStore } from './stores/auth';
+import { useSettingsStore } from './stores/settings';
 import XmbBackground from './components/layout/XmbBackground.vue';
 
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 
 onMounted(async () => {
   if (!authStore.initialized) {
     await authStore.fetchUser();
   }
+  await settingsStore.fetchPublicSettings();
 });
 </script>
 

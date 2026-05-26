@@ -34,8 +34,9 @@ export class UserService {
     if (data.preferences) {
       // Get current user to merge preferences
       const user = await this.userRepository.findById(userId);
+      const userObj = user?.toObject();
       updateData.preferences = {
-        ...(user?.preferences || {}),
+        ...(userObj?.preferences || {}),
         ...data.preferences
       } as IUser['preferences'];
     }

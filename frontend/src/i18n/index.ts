@@ -4,7 +4,13 @@ const messages = {
   en: {
     common: {
       loading: 'Loading...',
-      search: 'Search...'
+      search: 'Search...',
+      submit: 'Submit',
+      error: 'Error',
+      go_back: 'Go Back',
+      items: '{count} ITEMS',
+      no_items: 'No items found',
+      off: 'Off'
     },
     auth: {
       login: 'Login',
@@ -58,7 +64,19 @@ const messages = {
       language: 'Language',
       general: 'General Settings',
       themes: 'Themes',
-      appearance: 'Appearance'
+      appearance: 'Appearance',
+      background_media: 'Background Media',
+      select_media_type_first: 'Please set Background Type to Image or Video first!',
+      background_type: 'Background Type',
+      performance_mode: 'Performance Mode',
+      media_path: 'Media Path',
+      scanner_concurrency: 'Scanner Concurrency',
+      guest_account: 'Guest Account',
+      transcode_mode: 'Transcoding Mode',
+      hardware_encoder: 'Hardware Encoder',
+      keep_jit_cache: 'Keep JIT Resume Cache',
+      enter_media_path: 'Enter new media path:',
+      enter_concurrency_limit: 'Parallel file processing limit (1-8):'
     },
     categories: {
       user: 'Profile',
@@ -72,18 +90,50 @@ const messages = {
     profile: {
       view: 'View Profile',
       change_username: 'Change Username',
-      change_password: 'Change Password'
+      change_password: 'Change Password',
+      new_username: 'New Username',
+      new_password: 'New Password',
+      username_updated: 'Username updated successfully!',
+      password_updated: 'Password updated successfully!',
+      role: 'Role'
     },
     player: {
       recent: 'Recently Added',
       playlists: 'Playlists',
-      continue: 'Continue Watching'
+      continue: 'Continue Watching',
+      create_playlist: 'Create',
+      create_playlist_prompt: 'Enter playlist name:',
+      delete_playlist_confirm: 'Are you sure you want to delete this playlist?',
+      delete_selected_items_confirm: 'Delete {count} items from disk?',
+      clear_progress: 'Clear progress',
+      failed_create_playlist: 'Failed to create playlist',
+      failed_delete_playlist: 'Failed to delete playlist',
+      failed_add_to_playlist: 'Failed to add to playlist',
+      added_to_playlist: 'Added to playlist',
+      playlist_created_and_added: 'Playlist created and item added',
+      select_playlist_prompt: 'Select Playlist (1-{count}):\n{list}',
+      no_playlists_found_prompt: 'No playlists found. Enter name for new playlist:',
+      add_to_playlist: 'Add to Playlist',
+      playback_speed: 'Playback Speed',
+      repeat: 'Repeat',
+      quality: 'Quality',
+      subtitles: 'Subtitles',
+      settings: 'Settings',
+      error_browser_not_supported: 'Browser not supported for streaming',
+      error_failed_load_stream: 'Failed to load stream',
+      error_playback_failed: 'Playback failed'
     }
   },
   uk: {
     common: {
       loading: 'Завантаження...',
-      search: 'Пошук...'
+      search: 'Пошук...',
+      submit: 'Підтвердити',
+      error: 'Помилка',
+      go_back: 'Назад',
+      items: '{count} ЕЛЕМЕНТІВ',
+      no_items: 'Нічого не знайдено',
+      off: 'Вимк.'
     },
     auth: {
       login: 'Увійти',
@@ -137,7 +187,19 @@ const messages = {
       language: 'Мова',
       general: 'Загальні налаштування',
       themes: 'Теми',
-      appearance: 'Вигляд'
+      appearance: 'Вигляд',
+      background_media: 'Фон (Медіа)',
+      select_media_type_first: 'Спочатку оберіть тип фону Фото або Відео!',
+      background_type: 'Тип фону',
+      performance_mode: 'Режим продуктивності',
+      media_path: 'Шлях до медіа',
+      scanner_concurrency: 'Паралельність сканування',
+      guest_account: 'Гостьовий акаунт',
+      transcode_mode: 'Режим транскодування',
+      hardware_encoder: 'Апаратний енкодер',
+      keep_jit_cache: 'Зберігати JIT-кеш',
+      enter_media_path: 'Введіть новий шлях до медіа:',
+      enter_concurrency_limit: 'Ліміт паралельної обробки файлів (1-8):'
     },
     categories: {
       user: 'Профіль',
@@ -151,12 +213,38 @@ const messages = {
     profile: {
       view: 'Переглянути профіль',
       change_username: 'Змінити ім\'я',
-      change_password: 'Змінити пароль'
+      change_password: 'Змінити пароль',
+      new_username: 'Нове ім\'я користувача',
+      new_password: 'Новий пароль',
+      username_updated: 'Ім\'я користувача успішно змінено!',
+      password_updated: 'Пароль успішно змінено!',
+      role: 'Роль'
     },
     player: {
       recent: 'Нещодавно додані',
       playlists: 'Плейлисти',
-      continue: 'Продовжити перегляд'
+      continue: 'Продовжити перегляд',
+      create_playlist: 'Створити',
+      create_playlist_prompt: 'Введіть назву плейлиста:',
+      delete_playlist_confirm: 'Ви впевнені, що хочете видалити цей плейлист?',
+      delete_selected_items_confirm: 'Видалити {count} елемент(ів) з диска?',
+      clear_progress: 'Скинути прогрес',
+      failed_create_playlist: 'Не вдалося створити плейлист',
+      failed_delete_playlist: 'Не вдалося видалити плейлист',
+      failed_add_to_playlist: 'Не вдалося додати до плейлиста',
+      added_to_playlist: 'Додано до плейлиста',
+      playlist_created_and_added: 'Плейлист створено та елемент додано',
+      select_playlist_prompt: 'Оберіть плейлист (1-{count}):\n{list}',
+      no_playlists_found_prompt: 'Плейлистів не знайдено. Введіть назву для нового плейлиста:',
+      add_to_playlist: 'Додати до плейлиста',
+      playback_speed: 'Швидкість відтворення',
+      repeat: 'Повтор',
+      quality: 'Якість',
+      subtitles: 'Субтитри',
+      settings: 'Налаштування',
+      error_browser_not_supported: 'Браузер не підтримує адаптивне відтворення',
+      error_failed_load_stream: 'Не вдалося завантажити потік',
+      error_playback_failed: 'Помилка відтворення'
     }
   },
 };

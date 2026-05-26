@@ -9,18 +9,22 @@ ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || ffmpegInstaller.path);
 ffmpeg.setFfprobePath(process.env.FFPROBE_PATH || ffprobeInstaller.path);
 
 import { loadEsm } from 'load-esm';
-import { IMediaMetadata } from '../models/mediafile.model';
+import { IMediaMetadata, IMediaFile } from '../models/mediafile.model';
 import { getErrorMessage } from '../../../shared/utils/error.util';
+import { SettingsRepository } from '../../identity/repositories/settings.repository';
+import { writeFile } from 'fs/promises';
 
 export class MediaProcessorService {
   private mm: typeof import('music-metadata') | null = null;
 
   constructor(
     private repository: MediaFileRepository,
+    private settingsRepository: SettingsRepository,
     private mediaRoot: string,
     private thumbnailDir: string,
     private previewDir: string,
-    private subtitleDir: string
+    private subtitleDir: string,
+    private waveformDir: string
   ) {}
 
   private async getMusicMetadata() {
@@ -34,10 +38,67 @@ export class MediaProcessorService {
     await this._worker(id);
   }
 
+  private async getEncoder(settings: any): Promise<string> {
+    switch (settings.hardwareEncoder) {
+      case 'nvenc': return 'h264_nvenc';
+      case 'amf': return 'h264_amf';
+      case 'qsv': return 'h264_qsv';
+      case 'qsv_deeplink': return 'h264_qsv';
+      case 'videotoolbox': return 'h264_videotoolbox';
+      case 'cpu_h265': return 'libx265';
+      case 'cpu_av1': return 'libaom-av1';
+      case 'cpu_vp9': return 'libvpx-vp9';
+      default: return 'libx264';
+    }
+  }
+
+  private async generateWaveform(file: IMediaFile, fullPath: string, metadata: IMediaMetadata): Promise<void> {
+    const waveformName = `${file._id.toString()}.json`;
+    const waveformPath = path.join(this.waveformDir, waveformName);
+    try {
+      const points = 1000;
+      const data = await new Promise<number[]>((resolve, reject) => {
+        const samples: number[] = [];
+        ffmpeg(fullPath)
+          .noVideo()
+          .audioChannels(1)
+          .audioFrequency(points) // Roughly 1 sample per point if we use duration, but easier to just downsample
+          .format('s8')
+          .on('error', (err) => reject(err))
+          .pipe()
+          .on('data', (chunk: Buffer) => {
+            for (let i = 0; i < chunk.length; i++) {
+              samples.push(Math.abs(chunk.readInt8(i)) / 128);
+            }
+          })
+          .on('end', () => {
+            // Downsample/Upsample to exactly 'points'
+            const result: number[] = [];
+            const step = samples.length / points;
+            for (let i = 0; i < points; i++) {
+              const start = Math.floor(i * step);
+              const end = Math.floor((i + 1) * step);
+              let max = 0;
+              for (let j = start; j < end && j < samples.length; j++) {
+                if (samples[j] > max) max = samples[j];
+              }
+              result.push(parseFloat(max.toFixed(3)));
+            }
+            resolve(result);
+          });
+      });
+      await writeFile(waveformPath, JSON.stringify(data));
+      metadata.waveformPath = path.join('.cache/waveforms', waveformName);
+    } catch (err) {
+      console.error(`Waveform generation error for ${file.savedName}:`, err);
+    }
+  }
+
   private async _worker(id: string): Promise<void> {
     const file = await this.repository.findById(id);
     if (!file) return;
 
+    const settings = await this.settingsRepository.getSettings();
     const fullPath = path.join(this.mediaRoot, file.path);
     const metadata: IMediaMetadata = {};
 
@@ -49,8 +110,9 @@ export class MediaProcessorService {
         metadata.artist = audioMetadata.common.artist;
         metadata.title = audioMetadata.common.title;
         metadata.album = audioMetadata.common.album;
+        
+        await this.generateWaveform(file, fullPath, metadata);
       } else if (file.mimeType.startsWith('image')) {
-        // Generate small WebP thumbnail for images
         const thumbnailName = `${file._id.toString()}_thumb.webp`;
         const thumbPath = path.join(this.thumbnailDir, thumbnailName);
         
@@ -63,7 +125,6 @@ export class MediaProcessorService {
           metadata.thumbnailPath = path.join('.cache/thumbnails', thumbnailName);
         } catch (err) {
           console.error(`Sharp error for ${file.savedName}:`, err);
-          // Fallback to original if sharp fails
           metadata.thumbnailPath = file.path;
         }
       } else if (file.mimeType.startsWith('video') || file.mimeType === 'image/gif') {
@@ -82,7 +143,6 @@ export class MediaProcessorService {
             }
           }
 
-          // Generate Thumbnail (Static frame at 15%)
           const thumbnailName = `${file._id.toString()}.jpg`;
           metadata.thumbnailPath = path.join('.cache/thumbnails', thumbnailName);
 
@@ -98,33 +158,40 @@ export class MediaProcessorService {
               });
           });
 
-          // Generate Preview (Animated WebP from 4 segments)
-          if (metadata.duration && metadata.duration > 5) {
-            const previewName = `${file._id.toString()}_preview.webp`;
+          if (metadata.duration && metadata.duration > 15) {
+            const previewName = `${file._id.toString()}_preview.mp4`;
             const previewPath = path.join(this.previewDir, previewName);
             const d = metadata.duration;
-            const timestamps = [d * 0.15, d * 0.35, d * 0.60, d * 0.85];
+            const timestamps = [d * 0.1, d * 0.3, d * 0.5, d * 0.7, d * 0.9];
 
             try {
+              const encoder = await this.getEncoder(settings);
               await new Promise<void>((resolve, reject) => {
                 const cmd = ffmpeg();
                 timestamps.forEach(t => {
-                  cmd.input(fullPath).seekInput(t).duration(1);
+                  cmd.input(fullPath).seekInput(t).duration(3);
                 });
                 
                 cmd
                   .complexFilter([
-                    '[0:v][1:v][2:v][3:v]concat=n=4:v=1:a=0[v]',
-                    '[v]scale=480:-1,fps=12[out]'
+                    '[0:v][1:v][2:v][3:v][4:v]concat=n=5:v=1:a=0[v]',
+                    '[v]scale=480:-1,fps=15[out]'
                   ])
                   .outputOptions([
                     '-map [out]',
-                    '-loop 0',
-                    '-vcodec libwebp',
-                    '-lossless 0',
-                    '-qscale 40',
-                    '-an'
-                  ])
+                    '-c:v', encoder,
+                    '-pix_fmt', 'yuv420p',
+                    '-preset', 'veryfast',
+                    '-crf', '28',
+                    '-an',
+                    '-movflags', 'faststart'
+                  ]);
+                  
+                if (settings?.hardwareEncoder === 'qsv_deeplink') {
+                  cmd.outputOptions(['-dual_core 1']);
+                }
+
+                cmd
                   .on('end', () => resolve())
                   .on('error', (err) => reject(err))
                   .save(previewPath);
@@ -135,7 +202,8 @@ export class MediaProcessorService {
             }
           }
 
-          // Extract Subtitles
+          await this.generateWaveform(file, fullPath, metadata);
+
           const subtitleStreams = ffprobeData.streams.filter(s => s.codec_type === 'subtitle');
           if (subtitleStreams.length > 0) {
             metadata.subtitles = [];

@@ -60,11 +60,12 @@ export const useAuthStore = defineStore('auth', {
         this.initialized = true;
       }
     },
-    async updateProfile(updates: Partial<User>) {
+    async updateProfile(updates: Partial<User> & { password?: string }) {
       try {
-        const { data } = await api.patch('/auth/profile', updates);
+        const { data } = await api.patch('/users/profile', updates);
         if (this.user) {
-          this.user = { ...this.user, ...data.user };
+          const updatedUser = data?.user || data;
+          this.user = { ...this.user, ...updatedUser };
         }
       } catch (err) {
         console.error('Failed to update profile:', err);

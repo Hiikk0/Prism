@@ -8,6 +8,10 @@ export const UpdateSettingsSchema = z.object({
   pollingInterval: z.number().int().positive().optional(),
   scannerConcurrency: z.number().int().positive().optional(),
   scannerIoConcurrency: z.number().int().positive().optional(),
+  transcodeMode: z.enum(['JIT', 'DISK', 'OFF']).optional(),
+  hardwareEncoder: z.enum(['cpu_h264', 'cpu_h265', 'cpu_av1', 'cpu_vp9', 'nvenc', 'amf', 'qsv', 'qsv_deeplink', 'videotoolbox']).optional(),
+  targetQualities: z.array(z.number()).optional(),
+  keepJitResumeCache: z.boolean().optional(),
   createIfMissing: z.boolean().optional(), // frontend flag
 });
 

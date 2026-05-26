@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { toRef, ref, watch, onMounted, onUnmounted } from 'vue';
+import { toRef, ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useXmbNavigation, type XmbCategory } from '@/composables/useXmbNavigation';
 import XmbHints from './XmbHints.vue';
 import XmbMarquee from './XmbMarquee.vue';
+import { useAuthStore } from '@/stores/auth';
+
+const authStore = useAuthStore();
+const isLowPerf = computed(() => authStore.user?.preferences?.performanceMode === 'low');
 
 const props = defineProps<{
   categories: XmbCategory[];
@@ -117,12 +121,18 @@ onUnmounted(() => {
   window.removeEventListener('keydown', globalKeyHandler);
 });
 
+const closeSubMenuCompletely = () => {
+  isEditing.value = false;
+  subItemOpen.value = false;
+};
+
 defineExpose({
   activeCategory,
   activeItem,
   activeCatIndex,
   activeItemIndex,
-  handleKeydown
+  handleKeydown,
+  closeSubMenuCompletely
 });
 </script>
 
@@ -219,7 +229,7 @@ defineExpose({
                 <div
                   class="absolute left-[-20px] w-full h-[60px] bg-white/10 rounded-lg pointer-events-none transition-all duration-300"
                   :class="itemIdx === activeItemIndex && !subItemOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'"
-                  style="backdrop-filter: blur(4px);"
+                  :style="isLowPerf ? {} : { backdropFilter: 'blur(4px)' }"
                 ></div>
 
                 <!-- Item Content -->
@@ -250,7 +260,7 @@ defineExpose({
                   }"
                   :style="{
                     top: `${(sIdx - activeSubItemIndex) * 80}px`,
-                    backdropFilter: sIdx === activeSubItemIndex ? 'blur(8px)' : 'none'
+                    backdropFilter: sIdx === activeSubItemIndex && !isLowPerf ? 'blur(8px)' : 'none'
                   }"
                   @click.stop="setSubItem(sIdx); selectFocused()"
                 >

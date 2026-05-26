@@ -38,9 +38,21 @@ export class AdminController {
     // Trigger scanner restart if relevant settings changed
     const scanner = request.server.scanner;
     if (scanner && (data.mediaRootDirectory || data.usePolling !== undefined || data.pollingInterval !== undefined)) {
-      // Re-initialize the scanner with the potentially new media root
-      // In a real application, we might need a more granular way to update the root
       await scanner.initialize();
+    }
+
+    // Trigger transcoder proactive start/stop if mode changed
+    const transcoder = request.server.transcoder;
+    if (transcoder && data.transcodeMode) {
+      if (data.transcodeMode === 'DISK') {
+        transcoder.startProactiveTranscoding().catch(() => {});
+      } else if (data.transcodeMode === 'JIT') {
+        // If switching to JIT, stop library-wide proactive work but keep interactive
+        transcoder.stopBackgroundWork().catch(() => {});
+      } else if (data.transcodeMode === 'OFF') {
+        // If switching OFF, kill everything
+        transcoder.stopAllProcesses().catch(() => {});
+      }
     }
 
     return reply.send(settings);

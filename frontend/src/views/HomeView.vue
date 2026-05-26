@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import FilePickerModal from '@/components/common/FilePickerModal.vue';
 import { 
   Folder, 
   Video, 
@@ -20,13 +21,100 @@ import {
   Palette,
   Type,
   Key,
-  Play
+  Play,
+  ArrowRight
 } from 'lucide-vue-next';
 
 const { t } = useI18n();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const router = useRouter();
+
+const prefs = computed(() => authStore.user?.preferences || {
+  backgroundType: 'waves' as const,
+  performanceMode: 'high' as const,
+  backgroundMediaId: ''
+});
+
+const showCssWaves = computed(() => {
+  return prefs.value.backgroundType === 'waves' && prefs.value.performanceMode === 'high';
+});
+
+const showFilePicker = ref(false);
+const filePickerType = ref<'image' | 'video'>('image');
+
+const newUsername = ref('');
+const changeUsernameError = ref('');
+const changingUsername = ref(false);
+
+const newPassword = ref('');
+const confirmNewPassword = ref('');
+const changePasswordError = ref('');
+const changingPassword = ref(false);
+
+const xmbRef = ref<any>(null);
+
+const handleChangeUsername = async () => {
+  if (!newUsername.value) {
+    changeUsernameError.value = t('auth.username_required') || 'Username is required';
+    return;
+  }
+  if (newUsername.value.length < 3) {
+    changeUsernameError.value = t('auth.username_too_short') || 'Must be at least 3 characters';
+    return;
+  }
+
+  changingUsername.value = true;
+  changeUsernameError.value = '';
+  try {
+    await authStore.updateProfile({ username: newUsername.value });
+    newUsername.value = '';
+    xmbRef.value?.closeSubMenuCompletely();
+  } catch (err: any) {
+    changeUsernameError.value = err.response?.data?.error || 'Error updating username';
+  } finally {
+    changingUsername.value = false;
+  }
+};
+
+const handleChangePassword = async () => {
+  if (!newPassword.value) {
+    changePasswordError.value = t('auth.password_required') || 'Password is required';
+    return;
+  }
+  if (newPassword.value.length < 6) {
+    changePasswordError.value = t('auth.password_too_short') || 'Must be at least 6 characters';
+    return;
+  }
+  if (newPassword.value !== confirmNewPassword.value) {
+    changePasswordError.value = t('auth.password_mismatch') || 'Passwords do not match';
+    return;
+  }
+
+  changingPassword.value = true;
+  changePasswordError.value = '';
+  try {
+    await authStore.updateProfile({ password: newPassword.value });
+    newPassword.value = '';
+    confirmNewPassword.value = '';
+    xmbRef.value?.closeSubMenuCompletely();
+  } catch (err: any) {
+    changePasswordError.value = err.response?.data?.error || 'Error updating password';
+  } finally {
+    changingPassword.value = false;
+  }
+};
+
+const handleBackgroundSelected = async (file: any) => {
+  showFilePicker.value = false;
+  await authStore.updateProfile({ 
+    preferences: { 
+      backgroundType: authStore.user?.preferences?.backgroundType || 'waves',
+      backgroundMediaId: file._id,
+      performanceMode: authStore.user?.preferences?.performanceMode || 'high'
+    } 
+  });
+};
 
 onMounted(async () => {
   if (authStore.user?.role === 'admin') {
@@ -75,7 +163,7 @@ const xmbCategories = computed(() => categories.map(cat => {
           },
           {
             id: 'profile-role',
-            label: () => 'Role',
+            label: () => t('profile.role') || 'Role',
             value: () => authStore.user?.role || 'user',
             onSelect: () => {}
           }
@@ -89,13 +177,52 @@ const xmbCategories = computed(() => categories.map(cat => {
           id: 'user-change-name',
           label: () => t('profile.change_username') || 'Change Username',
           icon: Type,
-          onSelect: () => { alert('Not implemented: Change Username'); }
+          subItems: [
+            {
+              id: 'change-username-val',
+              label: () => t('profile.new_username') || 'New Username',
+              value: () => newUsername.value,
+              type: 'text' as const,
+              onUpdate: (val: string) => { newUsername.value = val; }
+            },
+            {
+              id: 'change-username-submit',
+              label: () => t('common.submit') || 'Submit',
+              icon: ArrowRight,
+              type: 'action' as const,
+              value: () => changeUsernameError.value || (changingUsername.value ? t('common.loading') : ''),
+              onSelect: () => handleChangeUsername()
+            }
+          ]
         },
         {
           id: 'user-change-pass',
           label: () => t('profile.change_password') || 'Change Password',
           icon: Key,
-          onSelect: () => { alert('Not implemented: Change Password'); }
+          subItems: [
+            {
+              id: 'change-password-val',
+              label: () => t('profile.new_password') || 'New Password',
+              value: () => newPassword.value,
+              type: 'password' as const,
+              onUpdate: (val: string) => { newPassword.value = val; }
+            },
+            {
+              id: 'change-password-confirm',
+              label: () => t('auth.confirm_password') || 'Confirm Password',
+              value: () => confirmNewPassword.value,
+              type: 'password' as const,
+              onUpdate: (val: string) => { confirmNewPassword.value = val; }
+            },
+            {
+              id: 'change-password-submit',
+              label: () => t('common.submit') || 'Submit',
+              icon: ArrowRight,
+              type: 'action' as const,
+              value: () => changePasswordError.value || (changingPassword.value ? t('common.loading') : ''),
+              onSelect: () => handleChangePassword()
+            }
+          ]
         }
       );
     }
@@ -128,7 +255,7 @@ const xmbCategories = computed(() => categories.map(cat => {
         subItems: [
           {
             id: 'app-bg-type',
-            label: () => 'Background Type',
+            label: () => t('settings.background_type') || 'Background Type',
             value: () => authStore.user?.preferences?.backgroundType || 'waves',
             onSelect: async () => {
               const types = ['waves', 'image', 'video', 'none'] as const;
@@ -145,24 +272,21 @@ const xmbCategories = computed(() => categories.map(cat => {
           },
           {
             id: 'app-bg-media',
-            label: () => 'Background Media URL',
+            label: () => t('settings.background_media') || 'Background Media',
             value: () => authStore.user?.preferences?.backgroundMediaId ? 'SET' : 'NONE',
             onSelect: async () => {
-              const url = prompt('Enter Background Image/Video URL:', authStore.user?.preferences?.backgroundMediaId || '');
-              if (url !== null) {
-                await authStore.updateProfile({ 
-                  preferences: { 
-                    backgroundType: authStore.user?.preferences?.backgroundType || 'waves',
-                    backgroundMediaId: url,
-                    performanceMode: authStore.user?.preferences?.performanceMode || 'high'
-                  } 
-                });
+              const bgType = authStore.user?.preferences?.backgroundType || 'waves';
+              if (bgType === 'waves' || bgType === 'none') {
+                alert(t('settings.select_media_type_first') || 'Please set Background Type to Image or Video first!');
+                return;
               }
+              filePickerType.value = bgType as 'image' | 'video';
+              showFilePicker.value = true;
             }
           },
           {
             id: 'app-perf',
-            label: () => 'Performance Mode',
+            label: () => t('settings.performance_mode') || 'Performance Mode',
             value: () => authStore.user?.preferences?.performanceMode || 'high',
             onSelect: async () => {
               const mode = authStore.user?.preferences?.performanceMode === 'low' ? 'high' : 'low';
@@ -187,30 +311,61 @@ const xmbCategories = computed(() => categories.map(cat => {
         subItems: [
           {
             id: 'gen-path',
-            label: () => 'Media Path',
+            label: () => t('settings.media_path') || 'Media Path',
             value: () => settingsStore.mediaPath,
             onSelect: async () => { 
               if (authStore.user?.role !== 'admin') return;
-              const newPath = prompt('Enter new media path:', settingsStore.mediaPath);
+              const newPath = prompt(t('settings.enter_media_path') || 'Enter new media path:', settingsStore.mediaPath);
               if (newPath) await settingsStore.updateSystemSettings({ mediaRootDirectory: newPath });
             }
           },
           {
             id: 'gen-scan-limit',
-            label: () => 'Scanner Concurrency',
+            label: () => t('settings.scanner_concurrency') || 'Scanner Concurrency',
             value: () => settingsStore.scannerConcurrency.toString(),
             onSelect: async () => {
-              const limit = prompt('Parallel file processing limit (1-8):', settingsStore.scannerConcurrency.toString());
+              const limit = prompt(t('settings.enter_concurrency_limit') || 'Parallel file processing limit (1-8):', settingsStore.scannerConcurrency.toString());
               if (limit) await settingsStore.updateSystemSettings({ scannerConcurrency: parseInt(limit) });
             }
           },
           {
             id: 'gen-guest',
-            label: () => 'Guest Account',
+            label: () => t('settings.guest_account') || 'Guest Account',
             value: () => settingsStore.guestAccountEnabled ? 'ON' : 'OFF',
             onSelect: async () => { 
               if (authStore.user?.role !== 'admin') return;
               await settingsStore.updateSystemSettings({ guestLoginEnabled: !settingsStore.guestAccountEnabled });
+            }
+          },
+          {
+            id: 'gen-transcode',
+            label: () => t('settings.transcode_mode') || 'Transcoding Mode',
+            value: () => settingsStore.transcodeMode,
+            onSelect: async () => {
+              const modes: Array<'JIT' | 'DISK' | 'OFF'> = ['JIT', 'DISK', 'OFF'];
+              const currentIdx = modes.indexOf(settingsStore.transcodeMode);
+              const nextMode = modes[(currentIdx + 1) % modes.length];
+              await settingsStore.updateSystemSettings({ transcodeMode: nextMode });
+            }
+          },
+          {
+            id: 'gen-encoder',
+            label: () => t('settings.hardware_encoder') || 'Hardware Encoder',
+            value: () => settingsStore.hardwareEncoder,
+            onSelect: async () => {
+              const encoders = ['cpu_h264', 'cpu_h265', 'cpu_av1', 'cpu_vp9', 'nvenc', 'amf', 'qsv', 'videotoolbox'];
+              const currentIdx = encoders.indexOf(settingsStore.hardwareEncoder);
+              const nextEncoder = encoders[(currentIdx + 1) % encoders.length];
+              await settingsStore.updateSystemSettings({ hardwareEncoder: nextEncoder });
+            }
+          },
+          {
+            id: 'gen-keep-jit',
+            label: () => t('settings.keep_jit_cache') || 'Keep JIT Resume Cache',
+            value: () => settingsStore.keepJitResumeCache ? 'ON' : 'OFF',
+            onSelect: async () => {
+              if (authStore.user?.role !== 'admin') return;
+              await settingsStore.updateSystemSettings({ keepJitResumeCache: !settingsStore.keepJitResumeCache });
             }
           }
         ]
@@ -262,7 +417,7 @@ const openFiles = (item: XmbItem) => {
 <template>
   <div class="h-screen w-screen overflow-hidden relative flex items-center justify-center bg-transparent">
     <!-- Sony XMB Dynamic Wave (Background layer) -->
-    <div class="absolute inset-0 pointer-events-none z-[-2] overflow-hidden">
+    <div v-if="showCssWaves" class="absolute inset-0 pointer-events-none z-[-2] overflow-hidden">
       <!-- Deep Radial Depth -->
       <div class="absolute inset-0 bg-radial-gradient from-blue-600/10 via-transparent to-transparent opacity-40 blur-[120px]"></div>
       
@@ -276,9 +431,19 @@ const openFiles = (item: XmbItem) => {
 
     <!-- NEW XMB Container -->
     <XmbContainer 
+      ref="xmbRef"
       :categories="xmbCategories"
       v-model:active-category="activeCategoryIndex"
       @select="(item: XmbItem) => openFiles(item)"
+    />
+
+    <!-- File Picker Modal for custom background media selection -->
+    <FilePickerModal
+      :show="showFilePicker"
+      :title="filePickerType === 'image' ? 'Оберіть Фото для фону' : 'Оберіть Відео для фону'"
+      :type="filePickerType"
+      @close="showFilePicker = false"
+      @select="handleBackgroundSelected"
     />
   </div>
 </template>

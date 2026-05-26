@@ -13,6 +13,11 @@ export interface IMediaMetadata {
     path: string;
     label: string;
   }>;
+  waveformPath?: string;
+  transcodedVersions?: Array<{
+    quality: string;
+    path: string;
+  }>;
 }
 
 export interface IMediaFile extends Document {

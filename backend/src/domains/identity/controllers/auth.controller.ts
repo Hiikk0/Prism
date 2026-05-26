@@ -85,7 +85,11 @@ export class AuthController {
 
   async me(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const user = request.user;
+      const jwtUser = request.user;
+      const user = await this.authService.findUserById(jwtUser.id);
+      if (!user) {
+        return reply.status(404).send({ error: 'User not found' });
+      }
       return reply.status(200).send({ user });
     } catch {
       return reply.status(500).send({ error: 'Internal Server Error' });

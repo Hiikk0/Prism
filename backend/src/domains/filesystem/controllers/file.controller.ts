@@ -13,10 +13,91 @@ import {
 } from '../schemas/file.schema';
 import { getErrorMessage } from '../../../shared/utils/error.util';
 import fs from 'fs';
+import { access } from 'fs/promises';
 import path from 'path';
 
+import { TranscodingService } from '../services/transcoding.service';
+
 export class FileController {
-  constructor(private fileService: FileService) {}
+  constructor(
+    private fileService: FileService,
+    private transcodingService: TranscodingService
+  ) {}
+
+  async getHlsManifest(request: FastifyRequest<{ Params: { id: string, quality: string } }>, reply: FastifyReply) {
+    try {
+      const { id, quality } = request.params;
+      const manifestPath = await this.transcodingService.getHlsManifest(id, parseInt(quality));
+      return reply.type('application/x-mpegurl').send(fs.createReadStream(manifestPath));
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
+  }
+
+  async getHlsSegment(req: FastifyRequest<{ Params: { id: string, quality: string, segment: string } }>, reply: FastifyReply) {
+    const { id, quality, segment } = req.params;
+    const segmentIndex = parseInt(segment.replace('seg_', '').replace('.ts', ''));
+
+    try {
+      await this.transcodingService.ensureSegment(id, parseInt(quality), segmentIndex);
+      
+      const mediaRoot = await this.fileService.getMediaRoot();
+      const segmentPath = path.join(mediaRoot, '.cache/transcode', id, quality, segment);
+      
+      // On Windows, a file being written by FFmpeg might be locked.
+      // We try to read it with a small retry logic.
+      let data;
+      let attempts = 0;
+      while (attempts < 5) {
+        try {
+          data = await fs.promises.readFile(segmentPath);
+          break;
+        } catch (err) {
+          attempts++;
+          if (attempts === 5) throw err;
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      return reply.type('video/MP2T').send(data);
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
+  }
+
+  async cleanupHls(req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const { id } = req.params;
+    const userId = (req.user as any)?.id;
+    try {
+      await this.transcodingService.cleanupTranscode(id, undefined, userId);
+      return reply.send({ success: true });
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
+  }
+
+  // POST version for navigator.sendBeacon (fires on tab close / hard refresh)
+  async cleanupHlsBeacon(req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const { id } = req.params;
+    const userId = (req.user as any)?.id;
+    try {
+      await this.transcodingService.cleanupTranscode(id, undefined, userId);
+      return reply.status(204).send();
+    } catch {
+      // Silently ignore – beacon requests can't handle errors anyway
+      return reply.status(204).send();
+    }
+  }
+
+  async getAvailableQualities(req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    try {
+      const { id } = req.params;
+      const result = await this.transcodingService.getAvailableQualities(id);
+      return reply.send(result);
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
+  }
 
   async getFiles(request: FastifyRequest, reply: FastifyReply) {
     const { type, parentId, isFolder, search, skip, limit, sortBy } = validate(GetFilesQuerySchema, request.query);
@@ -219,14 +300,35 @@ export class FileController {
 
       const previewPath = mediaFile.metadata?.previewPath;
       if (!previewPath) {
-        // Fallback to thumbnail if preview not available (e.g. for images)
         return this.getThumbnail(request, reply);
       }
 
       const mediaRoot = await this.fileService.getMediaRoot();
       const physicalPath = path.join(mediaRoot, previewPath);
+      const ext = path.extname(previewPath).toLowerCase();
       
-      return reply.type('image/webp').send(fs.createReadStream(physicalPath));
+      const contentType = ext === '.mp4' ? 'video/mp4' : 'image/webp';
+      return reply.type(contentType).send(fs.createReadStream(physicalPath));
+    } catch (err: unknown) {
+      return reply.status(500).send({ error: getErrorMessage(err) });
+    }
+  }
+
+  async getWaveform(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    try {
+      const { id } = request.params;
+      const mediaFile = await this.fileService.getFileById(id);
+      if (!mediaFile) return reply.status(404).send({ error: 'File not found' });
+
+      const waveformPath = mediaFile.metadata?.waveformPath;
+      if (!waveformPath) {
+        return reply.status(404).send({ error: 'Waveform not available' });
+      }
+
+      const mediaRoot = await this.fileService.getMediaRoot();
+      const physicalPath = path.join(mediaRoot, waveformPath);
+      
+      return reply.type('application/json').send(fs.createReadStream(physicalPath));
     } catch (err: unknown) {
       return reply.status(500).send({ error: getErrorMessage(err) });
     }

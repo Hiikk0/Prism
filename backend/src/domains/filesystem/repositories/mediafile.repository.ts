@@ -125,4 +125,17 @@ export class MediaFileRepository {
     const items = await dbQuery.exec();
     return { items, total };
   }
+
+  async findAllVideoFiles(): Promise<IMediaFile[]> {
+    return MediaFileModel.find({ 
+      mimeType: { $regex: /^video\//i },
+      'metadata.duration': { $gt: 0 }
+    }, { 
+      _id: 1, 
+      originalName: 1, 
+      path: 1, 
+      mimeType: 1, 
+      'metadata.duration': 1 
+    }).lean().exec() as unknown as IMediaFile[];
+  }
 }

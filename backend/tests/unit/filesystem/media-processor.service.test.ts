@@ -3,23 +3,87 @@ import { MediaFileRepository } from '@/domains/filesystem/repositories/mediafile
 import ffmpeg from 'fluent-ffmpeg';
 import { loadEsm } from 'load-esm';
 
+import { SettingsRepository } from '@/domains/identity/repositories/settings.repository';
+
 jest.mock('@/domains/filesystem/repositories/mediafile.repository');
+jest.mock('@/domains/identity/repositories/settings.repository');
 jest.mock('fluent-ffmpeg');
 jest.mock('load-esm');
+jest.mock('fs/promises', () => ({
+    writeFile: jest.fn().mockResolvedValue(undefined)
+}));
+
+function createMockFfmpeg() {
+    const mockInstance: any = {
+        eventListeners: {} as Record<string, Function>,
+        input: jest.fn().mockImplementation(function(this: any) { return this; }),
+        seekInput: jest.fn().mockImplementation(function(this: any) { return this; }),
+        duration: jest.fn().mockImplementation(function(this: any) { return this; }),
+        complexFilter: jest.fn().mockImplementation(function(this: any) { return this; }),
+        outputOptions: jest.fn().mockImplementation(function(this: any) { return this; }),
+        output: jest.fn().mockImplementation(function(this: any) { return this; }),
+        noVideo: jest.fn().mockImplementation(function(this: any) { return this; }),
+        audioChannels: jest.fn().mockImplementation(function(this: any) { return this; }),
+        audioFrequency: jest.fn().mockImplementation(function(this: any) { return this; }),
+        format: jest.fn().mockImplementation(function(this: any) { return this; }),
+        run: jest.fn().mockImplementation(function(this: any) {
+            const endCb = this.eventListeners['end'];
+            if (endCb) setImmediate(() => endCb());
+            return this;
+        }),
+        save: jest.fn().mockImplementation(function(this: any) {
+            const endCb = this.eventListeners['end'];
+            if (endCb) setImmediate(() => endCb());
+            return this;
+        }),
+        screenshots: jest.fn().mockImplementation(function(this: any) {
+            const endCb = this.eventListeners['end'];
+            if (endCb) setImmediate(() => endCb());
+            return this;
+        }),
+        pipe: jest.fn().mockImplementation(function(this: any) {
+            const stream: any = {
+                on: jest.fn().mockImplementation((event, cb) => {
+                    if (event === 'data') {
+                        setImmediate(() => {
+                            cb(Buffer.from(new Array(1000).fill(10)));
+                            if (stream.endCb) stream.endCb();
+                        });
+                    } else if (event === 'end') {
+                        stream.endCb = cb;
+                    }
+                    return stream;
+                })
+            };
+            return stream;
+        }),
+        on: jest.fn().mockImplementation(function(this: any, event, cb) {
+            this.eventListeners[event] = cb;
+            return this;
+        })
+    };
+    return mockInstance;
+}
 
 describe('MediaProcessorService', () => {
     let mediaProcessorService: MediaProcessorService;
     let mockRepo: jest.Mocked<MediaFileRepository>;
+    let mockSettingsRepo: jest.Mocked<SettingsRepository>;
     let mockMm: any;
 
     beforeEach(() => {
         mockRepo = new MediaFileRepository() as jest.Mocked<MediaFileRepository>;
+        mockSettingsRepo = new SettingsRepository() as jest.Mocked<SettingsRepository>;
+        mockSettingsRepo.getSettings.mockResolvedValue({ hardwareEncoder: 'cpu_h264' } as any);
+
         mediaProcessorService = new MediaProcessorService(
           mockRepo, 
+          mockSettingsRepo,
           'C:/media', 
           'C:/media/.cache/thumbnails', 
           'C:/media/.cache/preview', 
-          'C:/media/.cache/subtitles'
+          'C:/media/.cache/subtitles',
+          'C:/media/.cache/waveforms'
         );
         
         mockMm = {
@@ -27,6 +91,9 @@ describe('MediaProcessorService', () => {
         };
         (loadEsm as jest.Mock).mockResolvedValue(mockMm);
         
+        const mockFfmpegInstance = createMockFfmpeg();
+        (ffmpeg as unknown as jest.Mock).mockReturnValue(mockFfmpegInstance);
+
         jest.clearAllMocks();
     });
 
@@ -45,10 +112,6 @@ describe('MediaProcessorService', () => {
 
         await mediaProcessorService.processFile('file1');
 
-        // wait for queue to process (mocked queue is async)
-        // For fastq.promise, we might need to wait for the promise from push if we want to ensure it's done
-        // However, in our service, push is awaited.
-
         expect(loadEsm).toHaveBeenCalledWith('music-metadata');
         expect(mockMm.parseFile).toHaveBeenCalled();
         expect(mockRepo.update).toHaveBeenCalledWith('file1', expect.objectContaining({
@@ -63,21 +126,11 @@ describe('MediaProcessorService', () => {
     it('should process video metadata using ffmpeg', async () => {
         const mockFfprobeData = {
             format: { duration: 3600 },
-            streams: [{ width: 1920, height: 1080 }]
+            streams: [{ codec_type: 'video', width: 1920, height: 1080 }]
         };
         
         (ffmpeg.ffprobe as unknown as jest.Mock).mockImplementation((path, cb) => {
             cb(null, mockFfprobeData);
-        });
-
-        const mockFfmpegInstance = {
-            on: jest.fn().mockReturnThis(),
-            screenshots: jest.fn().mockReturnThis()
-        };
-        (ffmpeg as unknown as jest.Mock).mockReturnValue(mockFfmpegInstance);
-        mockFfmpegInstance.on.mockImplementation((event, cb) => {
-            if (event === 'end') cb();
-            return mockFfmpegInstance;
         });
 
         mockRepo.findById.mockResolvedValue({ 
@@ -112,19 +165,6 @@ describe('MediaProcessorService', () => {
             cb(null, mockFfprobeData);
         });
 
-        const mockFfmpegInstance = {
-            on: jest.fn().mockReturnThis(),
-            screenshots: jest.fn().mockReturnThis(),
-            output: jest.fn().mockReturnThis(),
-            outputOptions: jest.fn().mockReturnThis(),
-            run: jest.fn()
-        };
-        (ffmpeg as unknown as jest.Mock).mockReturnValue(mockFfmpegInstance);
-        mockFfmpegInstance.on.mockImplementation((event, cb) => {
-            if (event === 'end') cb();
-            return mockFfmpegInstance;
-        });
-
         mockRepo.findById.mockResolvedValue({ 
             _id: 'file3', 
             mimeType: 'video/mkv', 
@@ -134,9 +174,6 @@ describe('MediaProcessorService', () => {
 
         await mediaProcessorService.processFile('file3');
 
-        // It should call ffmpeg for subtitles extraction
-        // In our implementation, we'll expect ffmpeg to be called twice (once for screenshots, once for subtitles, or combined)
-        // Let's assume we do it sequentially or use one command. It's easier sequentially for the test.
         expect(mockRepo.update).toHaveBeenCalledWith('file3', expect.objectContaining({
             metadata: expect.objectContaining({
                 subtitles: [

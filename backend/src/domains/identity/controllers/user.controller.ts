@@ -13,7 +13,7 @@ export class UserController {
 
     try {
       const updatedUser = await this.userService.updateProfile(user.id, body);
-      return reply.send(updatedUser);
+      return reply.send({ user: updatedUser });
     } catch (err: unknown) {
       const message = getErrorMessage(err);
       if (message === 'Username already exists') {

@@ -3,6 +3,9 @@ import mongoose from 'mongoose';
 import * as dotenv from 'dotenv';
 import path from 'path';
 import { mkdir } from 'fs/promises';
+import { MediaProcessorService } from './domains/filesystem/services/media-processor.service';
+import { TranscodingService } from './domains/filesystem/services/transcoding.service';
+import { ScannerService } from './domains/filesystem/services/scanner.service';
 
 // Load environment variables if needed
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -21,8 +24,6 @@ const start = async () => {
     // Initialize Global Settings
     const { SettingsRepository } = await import('./domains/identity/repositories/settings.repository');
     const { UserRepository } = await import('./domains/identity/repositories/user.repository');
-    const { ScannerService } = await import('./domains/filesystem/services/scanner.service');
-    const { MediaProcessorService } = await import('./domains/filesystem/services/media-processor.service');
     const { MediaFileRepository } = await import('./domains/filesystem/repositories/mediafile.repository');
     const bcrypt = (await import('bcryptjs')) as typeof import('bcryptjs');
 
@@ -52,16 +53,40 @@ const start = async () => {
     const thumbnailDir = path.join(actualMediaRoot, '.cache/thumbnails');
     const previewDir = path.join(actualMediaRoot, '.cache/preview');
     const subtitleDir = path.join(actualMediaRoot, '.cache/subtitles');
+    const waveformDir = path.join(actualMediaRoot, '.cache/waveforms');
+    const transcodeDir = path.join(actualMediaRoot, '.cache/transcode');
     await mkdir(thumbnailDir, { recursive: true });
     await mkdir(previewDir, { recursive: true });
     await mkdir(subtitleDir, { recursive: true });
+    await mkdir(waveformDir, { recursive: true });
+    await mkdir(transcodeDir, { recursive: true });
 
-    const processor = new MediaProcessorService(mediaRepo, actualMediaRoot, thumbnailDir, previewDir, subtitleDir);
+    const processor = new MediaProcessorService(mediaRepo, settingsRepo, actualMediaRoot, thumbnailDir, previewDir, subtitleDir, waveformDir);
+    const transcoder = new TranscodingService(mediaRepo, settingsRepo, actualMediaRoot, transcodeDir);
     const scanner = new ScannerService(mediaRepo, processor, actualMediaRoot, settingsRepo, systemUser._id.toString());
     
     await scanner.initialize();
     app.decorate('scanner', scanner);
+    app.decorate('processor', processor);
+    app.decorate('transcoder', transcoder);
     app.log.info('File watcher initialized');
+
+    // Start proactive transcoding for DISK mode
+    if (settings.transcodeMode === 'DISK') {
+      transcoder.startProactiveTranscoding().catch(err => {
+        app.log.error('Failed to start proactive transcoding:', err);
+      });
+    }
+
+    // Handle shutdown cleanup
+    process.on('SIGTERM', async () => {
+      await transcoder.stopAllProcesses();
+      process.exit(0);
+    });
+    process.on('SIGINT', async () => {
+      await transcoder.stopAllProcesses();
+      process.exit(0);
+    });
 
     // Initialize System Playlists
     const { PlayerService } = await import('./domains/player/services/player.service');

@@ -21,6 +21,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const pollingInterval = ref(100);
   const scannerConcurrency = ref(2);
   const scannerIoConcurrency = ref(10);
+  const transcodeMode = ref<'JIT' | 'DISK' | 'OFF'>('OFF');
+  const hardwareEncoder = ref<string>('cpu_h264');
+  const targetQualities = ref<number[]>([1080, 720, 480]);
+  const keepJitResumeCache = ref(false);
   const loading = ref(false);
 
   // Fetch from backend
@@ -35,10 +39,27 @@ export const useSettingsStore = defineStore('settings', () => {
       pollingInterval.value = data.pollingInterval;
       scannerConcurrency.value = data.scannerConcurrency;
       scannerIoConcurrency.value = data.scannerIoConcurrency;
+      transcodeMode.value = data.transcodeMode || 'OFF';
+      hardwareEncoder.value = data.hardwareEncoder || 'cpu_h264';
+      targetQualities.value = data.targetQualities || [1080, 720, 480];
+      keepJitResumeCache.value = !!data.keepJitResumeCache;
     } catch (err) {
       console.warn('Failed to fetch system settings');
     } finally {
       loading.value = false;
+    }
+  };
+
+  const fetchPublicSettings = async () => {
+    try {
+      const { data } = await api.get('/auth/settings');
+      registrationEnabled.value = data.registrationEnabled;
+      guestAccountEnabled.value = data.guestLoginEnabled;
+      transcodeMode.value = data.transcodeMode || 'OFF';
+      hardwareEncoder.value = data.hardwareEncoder || 'cpu_h264';
+      targetQualities.value = data.targetQualities || [1080, 720, 480];
+    } catch (err) {
+      console.warn('Failed to fetch public settings');
     }
   };
 
@@ -54,6 +75,10 @@ export const useSettingsStore = defineStore('settings', () => {
       if (data.pollingInterval !== undefined) pollingInterval.value = data.pollingInterval;
       if (data.scannerConcurrency !== undefined) scannerConcurrency.value = data.scannerConcurrency;
       if (data.scannerIoConcurrency !== undefined) scannerIoConcurrency.value = data.scannerIoConcurrency;
+      if (data.transcodeMode !== undefined) transcodeMode.value = data.transcodeMode;
+      if (data.hardwareEncoder !== undefined) hardwareEncoder.value = data.hardwareEncoder;
+      if (data.targetQualities !== undefined) targetQualities.value = data.targetQualities;
+      if (data.keepJitResumeCache !== undefined) keepJitResumeCache.value = data.keepJitResumeCache;
     } catch (err) {
       console.error('Failed to update system settings');
       throw err;
@@ -100,6 +125,10 @@ export const useSettingsStore = defineStore('settings', () => {
     pollingInterval,
     scannerConcurrency,
     scannerIoConcurrency,
+    transcodeMode,
+    hardwareEncoder,
+    targetQualities,
+    keepJitResumeCache,
     activeTheme,
     background,
     fontColor,
@@ -107,6 +136,7 @@ export const useSettingsStore = defineStore('settings', () => {
     availableThemes,
     loading,
     fetchSystemSettings,
+    fetchPublicSettings,
     updateSystemSettings
   };
 });
