@@ -13,9 +13,13 @@ import { IMediaMetadata, IMediaFile } from '../models/mediafile.model';
 import { getErrorMessage } from '../../../shared/utils/error.util';
 import { SettingsRepository } from '../../identity/repositories/settings.repository';
 import { writeFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { GpuManagerService } from './gpu-manager.service';
+import pLimit from 'p-limit';
 
 export class MediaProcessorService {
   private mm: typeof import('music-metadata') | null = null;
+  private previewLimiter: ReturnType<typeof pLimit>;
 
   constructor(
     private repository: MediaFileRepository,
@@ -24,8 +28,12 @@ export class MediaProcessorService {
     private thumbnailDir: string,
     private previewDir: string,
     private subtitleDir: string,
-    private waveformDir: string
-  ) {}
+    private waveformDir: string,
+    private gpuManager: GpuManagerService,
+    previewConcurrency: number = 1
+  ) {
+    this.previewLimiter = pLimit(previewConcurrency);
+  }
 
   private async getMusicMetadata() {
     if (!this.mm) {
@@ -38,23 +46,15 @@ export class MediaProcessorService {
     await this._worker(id);
   }
 
-  private async getEncoder(settings: any): Promise<string> {
-    switch (settings.hardwareEncoder) {
-      case 'nvenc': return 'h264_nvenc';
-      case 'amf': return 'h264_amf';
-      case 'qsv': return 'h264_qsv';
-      case 'qsv_deeplink': return 'h264_qsv';
-      case 'videotoolbox': return 'h264_videotoolbox';
-      case 'cpu_h265': return 'libx265';
-      case 'cpu_av1': return 'libaom-av1';
-      case 'cpu_vp9': return 'libvpx-vp9';
-      default: return 'libx264';
-    }
-  }
+  // getEncoder() removed — replaced by GpuManagerService.allocate()
 
   private async generateWaveform(file: IMediaFile, fullPath: string, metadata: IMediaMetadata): Promise<void> {
     const waveformName = `${file._id.toString()}.json`;
     const waveformPath = path.join(this.waveformDir, waveformName);
+    metadata.waveformPath = path.join('.cache/waveforms', waveformName);
+    
+    if (existsSync(waveformPath)) return;
+
     try {
       const points = 1000;
       const data = await new Promise<number[]>((resolve, reject) => {
@@ -88,7 +88,6 @@ export class MediaProcessorService {
           });
       });
       await writeFile(waveformPath, JSON.stringify(data));
-      metadata.waveformPath = path.join('.cache/waveforms', waveformName);
     } catch (err) {
       console.error(`Waveform generation error for ${file.savedName}:`, err);
     }
@@ -144,61 +143,65 @@ export class MediaProcessorService {
           }
 
           const thumbnailName = `${file._id.toString()}.jpg`;
+          const thumbPath = path.join(this.thumbnailDir, thumbnailName);
           metadata.thumbnailPath = path.join('.cache/thumbnails', thumbnailName);
 
-          await new Promise<void>((resolve, reject) => {
-            ffmpeg(fullPath)
-              .on('end', () => resolve())
-              .on('error', (err) => reject(err))
-              .screenshots({
-                timestamps: ['15%'],
-                filename: thumbnailName,
-                folder: this.thumbnailDir,
-                size: '480x?'
-              });
-          });
+          if (!existsSync(thumbPath)) {
+            await new Promise<void>((resolve, reject) => {
+              ffmpeg(fullPath)
+                .on('end', () => resolve())
+                .on('error', (err) => reject(err))
+                .screenshots({
+                  timestamps: ['15%'],
+                  filename: thumbnailName,
+                  folder: this.thumbnailDir,
+                  size: '480x?'
+                });
+            });
+          }
 
           if (metadata.duration && metadata.duration > 15) {
             const previewName = `${file._id.toString()}_preview.mp4`;
             const previewPath = path.join(this.previewDir, previewName);
-            const d = metadata.duration;
-            const timestamps = [d * 0.1, d * 0.3, d * 0.5, d * 0.7, d * 0.9];
+            metadata.previewPath = path.join('.cache/preview', previewName);
 
-            try {
-              const encoder = await this.getEncoder(settings);
-              await new Promise<void>((resolve, reject) => {
-                const cmd = ffmpeg();
-                timestamps.forEach(t => {
-                  cmd.input(fullPath).seekInput(t).duration(3);
-                });
-                
-                cmd
-                  .complexFilter([
-                    '[0:v][1:v][2:v][3:v][4:v]concat=n=5:v=1:a=0[v]',
-                    '[v]scale=480:-1,fps=15[out]'
-                  ])
-                  .outputOptions([
-                    '-map [out]',
-                    '-c:v', encoder,
-                    '-pix_fmt', 'yuv420p',
-                    '-preset', 'veryfast',
-                    '-crf', '28',
-                    '-an',
-                    '-movflags', 'faststart'
-                  ]);
+            if (!existsSync(previewPath)) {
+              const d = metadata.duration;
+              const timestamps = [d * 0.1, d * 0.3, d * 0.5, d * 0.7, d * 0.9];
+
+              try {
+                const allocation = this.gpuManager.allocate({ resolution: file.metadata?.resolution });
+                const encoder = allocation.encoderName;
+                await this.previewLimiter(() => new Promise<void>((resolve, reject) => {
+                  const cmd = ffmpeg();
+                  timestamps.forEach(t => {
+                    cmd.input(fullPath).seekInput(t).duration(3);
+                  });
                   
-                if (settings?.hardwareEncoder === 'qsv_deeplink') {
-                  cmd.outputOptions(['-dual_core 1']);
-                }
+                  cmd
+                    .complexFilter([
+                      '[0:v][1:v][2:v][3:v][4:v]concat=n=5:v=1:a=0[v]',
+                      '[v]scale=480:-1,fps=15[out]'
+                    ])
+                    .outputOptions([
+                      '-map [out]',
+                      '-c:v', encoder,
+                      '-pix_fmt', 'yuv420p',
+                      '-preset', 'veryfast',
+                      '-b:v', '1500k',
+                      '-an',
+                      '-movflags', 'faststart'
+                    ]);
+                    // DeepLink flags are now handled by GpuManager (not hardcoded here)
 
-                cmd
-                  .on('end', () => resolve())
-                  .on('error', (err) => reject(err))
-                  .save(previewPath);
-              });
-              metadata.previewPath = path.join('.cache/preview', previewName);
-            } catch (err) {
-              console.error(`Preview generation error for ${file.savedName}:`, err);
+                  cmd
+                    .on('end', () => resolve())
+                    .on('error', (err) => reject(err))
+                    .save(previewPath);
+                }));
+              } catch (err) {
+                console.error(`Preview generation error for ${file.savedName}:`, err);
+              }
             }
           }
 

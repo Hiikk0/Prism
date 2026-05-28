@@ -1,5 +1,11 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface IGpuConfig {
+  autoDetect: boolean;            // true = auto-detect GPU based on benchmark results (fastest first)
+  preferredCodec: string;         // 'auto', 'h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264', etc.
+  previewConcurrency: number;     // Max concurrent preview ffmpeg processes (prevents driver crashes)
+}
+
 export interface ISettings extends Document {
   registrationEnabled: boolean;
   guestLoginEnabled: boolean;
@@ -9,11 +15,19 @@ export interface ISettings extends Document {
   scannerConcurrency: number;
   scannerIoConcurrency: number;
   transcodeMode: 'JIT' | 'DISK' | 'OFF';
+  /** @deprecated Use gpuConfig.preferredCodec instead. Kept for backward compatibility. */
   hardwareEncoder: 'cpu_h264' | 'cpu_h265' | 'cpu_av1' | 'cpu_vp9' | 'nvenc' | 'amf' | 'qsv' | 'qsv_deeplink' | 'videotoolbox';
+  gpuConfig: IGpuConfig;
   targetQualities: number[];
   keepJitResumeCache: boolean;
   updatedAt: Date;
 }
+
+const GpuConfigSchema = new Schema({
+  autoDetect: { type: Boolean, default: true },
+  preferredCodec: { type: String, default: 'auto' },
+  previewConcurrency: { type: Number, default: 1 },
+}, { _id: false });
 
 const SettingsSchema: Schema = new Schema({
   registrationEnabled: { type: Boolean, default: true },
@@ -29,9 +43,11 @@ const SettingsSchema: Schema = new Schema({
     enum: ['cpu_h264', 'cpu_h265', 'cpu_av1', 'cpu_vp9', 'nvenc', 'amf', 'qsv', 'qsv_deeplink', 'videotoolbox'],
     default: 'cpu_h264'
   },
+  gpuConfig: { type: GpuConfigSchema, default: () => ({}) },
   targetQualities: { type: [Number], default: [1080, 720, 480] },
   keepJitResumeCache: { type: Boolean, default: false },
   updatedAt: { type: Date, default: Date.now }
 });
 
 export const SettingsModel = mongoose.model<ISettings>('Settings', SettingsSchema);
+

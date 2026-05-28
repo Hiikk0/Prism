@@ -6,9 +6,11 @@ import { mkdir } from 'fs/promises';
 import { MediaProcessorService } from './domains/filesystem/services/media-processor.service';
 import { TranscodingService } from './domains/filesystem/services/transcoding.service';
 import { ScannerService } from './domains/filesystem/services/scanner.service';
+import { GpuManagerService } from './domains/filesystem/services/gpu-manager.service';
 
-// Load environment variables if needed
+// Load environment variables from backend/.env or root .env
 dotenv.config({ path: path.join(__dirname, '../.env') });
+dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/prism-media-server';
@@ -61,8 +63,14 @@ const start = async () => {
     await mkdir(waveformDir, { recursive: true });
     await mkdir(transcodeDir, { recursive: true });
 
-    const processor = new MediaProcessorService(mediaRepo, settingsRepo, actualMediaRoot, thumbnailDir, previewDir, subtitleDir, waveformDir);
-    const transcoder = new TranscodingService(mediaRepo, settingsRepo, actualMediaRoot, transcodeDir);
+    // Initialize GPU Manager — benchmark all available encoders at startup
+    const gpuManager = new GpuManagerService();
+    await gpuManager.initialize();
+    app.decorate('gpuManager', gpuManager);
+
+    const previewConcurrency = settings.gpuConfig?.previewConcurrency ?? 1;
+    const processor = new MediaProcessorService(mediaRepo, settingsRepo, actualMediaRoot, thumbnailDir, previewDir, subtitleDir, waveformDir, gpuManager, previewConcurrency);
+    const transcoder = new TranscodingService(mediaRepo, settingsRepo, actualMediaRoot, transcodeDir, gpuManager);
     const scanner = new ScannerService(mediaRepo, processor, actualMediaRoot, settingsRepo, systemUser._id.toString());
     
     await scanner.initialize();

@@ -6,8 +6,10 @@ import { SettingsRepository } from '../../identity/repositories/settings.reposit
 import { mkdir, access, writeFile, readFile, stat, readdir, rm } from 'fs/promises';
 import { IMediaFile } from '../models/mediafile.model';
 import { PlaybackProgressModel } from '../../player/models/playback-progress.model';
+import { GpuManagerService } from './gpu-manager.service';
 
 export class TranscodingService {
+  private readonly SEGMENT_DURATION = 2;
   private activeJitProcesses = new Map<string, { command: ffmpeg.FfmpegCommand, startSeconds: number }>();
   private activeFillerProcesses = new Map<string, ffmpeg.FfmpegCommand>();
   private backgroundQueue: Array<{ file: IMediaFile, quality: number, startSeconds: number, priority: number }> = [];
@@ -18,8 +20,16 @@ export class TranscodingService {
     private repository: MediaFileRepository,
     private settingsRepository: SettingsRepository,
     private mediaRoot: string,
-    private transcodeDir: string
-  ) {}
+    private transcodeDir: string,
+    private gpuManager: GpuManagerService
+  ) {
+    if (process.env.FFMPEG_PATH) {
+      ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+    }
+    if (process.env.FFPROBE_PATH) {
+      ffmpeg.setFfprobePath(process.env.FFPROBE_PATH);
+    }
+  }
 
   /**
    * Returns available playback qualities for a given file.
@@ -124,7 +134,7 @@ export class TranscodingService {
     const duration = file.metadata?.duration || 0;
     if (duration <= 0) return;
 
-    const segmentDuration = 6;
+    const segmentDuration = this.SEGMENT_DURATION;
     const segmentCount = Math.ceil(duration / segmentDuration);
     
     let content = '#EXTM3U\n';
@@ -172,15 +182,19 @@ export class TranscodingService {
     const settings = await this.settingsRepository.getSettings();
     if (!settings) throw new Error('Settings not found');
 
+    // Worker Pool Lookahead: proactively transcode next segments on other GPUs
+    this.lookaheadTranscode(file, quality, settings, segmentIndex).catch(() => {});
+
     const playlistPath = path.join(outputDir, `jit_tmp_${quality}.m3u8`);
     let attempts = 0;
     while (attempts < 120) { // Max 30s wait (120 * 250ms)
       {
         const existing = this.activeJitProcesses.get(processKey);
-        const requestedTime = segmentIndex * 6;
+        const requestedTime = segmentIndex * this.SEGMENT_DURATION;
 
         // If no process OR the existing process is too far behind/ahead, restart
-        if (!existing || existing.startSeconds > requestedTime || (requestedTime - existing.startSeconds) > 300) {
+        // For heavy videos, waiting for a process to catch up even 10 seconds can take too long.
+        if (!existing || existing.startSeconds > requestedTime || (requestedTime - existing.startSeconds) > 10) {
           // Coalescing logic: wait a bit to see if the player is just "probing"
           this.pendingStarts.set(processKey, requestedTime);
           await new Promise(resolve => setTimeout(resolve, 200));
@@ -189,6 +203,11 @@ export class TranscodingService {
             console.log(`${settings.transcodeMode}: Segment ${segmentIndex} requested. ${existing ? 'Jumping' : 'Starting'} FFmpeg from ${requestedTime}s`);
             const promise = this.startTranscoding(file, quality, settings, requestedTime);
             
+            // Trigger lookahead/filler to fill in gaps from 0s if we jumped (or started)
+            if (settings.transcodeMode === 'DISK') {
+               this.triggerBackgroundFiller(file, quality, settings, 0).catch(() => {});
+            }
+
             // For DISK mode, we don't await the promise here to avoid blocking the polling loop
             if (settings.transcodeMode === 'JIT') {
               await promise;
@@ -255,6 +274,109 @@ export class TranscodingService {
     throw new Error(`Segment ${segmentIndex} generation failed or timed out`);
   }
 
+  /**
+   * Lookahead Cache: proactively transcode upcoming segments on multiple GPUs.
+   * Only fires when the Worker Pool can actually help (multiple GPUs, single GPU too slow).
+   */
+  private async lookaheadTranscode(file: IMediaFile, quality: number, settings: any, currentSegmentIndex: number): Promise<void> {
+    const targetFps = 30; // Standard playback FPS
+    if (!this.gpuManager.canBenefitFromPool(targetFps)) return;
+
+    let poolSize = this.gpuManager.getPoolSize();
+    if (file.metadata?.resolution) {
+      const width = parseInt((file.metadata.resolution as string).split('x')[0], 10);
+      if (!isNaN(width) && width > 7680) {
+        poolSize = 0; // Disable lookahead completely for extreme resolutions (16K) to avoid GPU memory overflow
+      }
+    }
+
+    const duration = file.metadata?.duration || 0;
+    const totalSegments = Math.ceil(duration / this.SEGMENT_DURATION);
+
+    // Look ahead: transcode the next `poolSize` segments in parallel
+    const lookaheadPromises: Promise<void>[] = [];
+
+    for (let offset = 1; offset <= poolSize; offset++) {
+      const nextSegIdx = currentSegmentIndex + offset;
+      if (nextSegIdx >= totalSegments) break;
+
+      const segPath = path.join(
+        this.transcodeDir, file._id.toString(), quality.toString(),
+        `seg_${nextSegIdx.toString().padStart(3, '0')}.ts`
+      );
+
+      // Skip if already exists
+      try {
+        const s = await stat(segPath);
+        if (s.size > 0) continue;
+      } catch {
+        // Not found — proceed to transcode
+      }
+
+      const allocation = this.gpuManager.allocateForSegment(nextSegIdx, { resolution: file.metadata?.resolution });
+      const startSec = nextSegIdx * this.SEGMENT_DURATION;
+
+      lookaheadPromises.push(
+        this.startSingleSegmentTranscode(file, quality, allocation, startSec, nextSegIdx).catch(err => {
+          console.error(`Lookahead segment ${nextSegIdx} failed:`, err.message);
+        })
+      );
+    }
+
+    if (lookaheadPromises.length > 0) {
+      // Fire and forget — don't block the current segment request
+      Promise.all(lookaheadPromises).catch(() => {});
+    }
+  }
+
+  /**
+   * Transcode a single segment using a specific GPU allocation.
+   * Used by the Lookahead Worker Pool to distribute segments across GPUs.
+   */
+  private async startSingleSegmentTranscode(
+    file: IMediaFile, quality: number, allocation: { encoderName: string; hwaccelArgs: string[] },
+    startSeconds: number, segmentIndex: number
+  ): Promise<void> {
+    const outputDir = path.join(this.transcodeDir, file._id.toString(), quality.toString());
+    await mkdir(outputDir, { recursive: true });
+
+    const fullPath = path.join(this.mediaRoot, file.path);
+    const segPath = path.join(outputDir, `seg_${segmentIndex.toString().padStart(3, '0')}.ts`);
+
+    return new Promise((resolve, reject) => {
+      ffmpeg(fullPath)
+        .inputOptions([
+          ...allocation.hwaccelArgs,
+          '-ss', startSeconds.toString(),
+        ])
+        .outputOptions([
+          '-c:v', allocation.encoderName,
+          '-preset', 'veryfast',
+          '-g', '48',
+          '-sc_threshold', '0',
+          '-map', '0:v:0?',
+          '-map', '0:a:0?',
+          '-vf', `scale=-2:${quality}`,
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-ac', '2',
+          '-f', 'mpegts',
+          '-t', this.SEGMENT_DURATION.toString(), // Exactly one segment duration
+        ])
+        .on('end', () => {
+          console.log(`Lookahead: segment ${segmentIndex} done (${allocation.encoderName})`);
+          resolve();
+        })
+        .on('error', (err) => {
+          if (!err.message.includes('SIGKILL')) {
+            console.error(`Lookahead error [seg ${segmentIndex}]: ${err.message}`);
+          }
+          reject(err);
+        })
+        .save(segPath);
+    });
+  }
+
   async cleanupTranscode(id: string, quality?: number, userId?: string): Promise<void> {
     const targetDir = quality 
       ? path.join(this.transcodeDir, id, quality.toString())
@@ -310,7 +432,7 @@ export class TranscodingService {
         const progress = await PlaybackProgressModel.findOne({ userId, mediaId: id });
         
         if (progress && progress.currentTime > 0) {
-          const startIdx = Math.floor(progress.currentTime / 6);
+          const startIdx = Math.floor(progress.currentTime / this.SEGMENT_DURATION);
           const allowedSegments = [
             `seg_${startIdx.toString().padStart(3, '0')}.ts`,
             `seg_${(startIdx + 1).toString().padStart(3, '0')}.ts`,
@@ -366,15 +488,7 @@ export class TranscodingService {
     }
   }
 
-  private async getEncoder(settings: any): Promise<string> {
-    switch (settings.hardwareEncoder) {
-      case 'nvenc': return 'h264_nvenc';
-      case 'amf': return 'h264_amf';
-      case 'qsv': return 'h264_qsv';
-      case 'videotoolbox': return 'h264_videotoolbox';
-      default: return 'libx264';
-    }
-  }
+  // getEncoder() removed — replaced by GpuManagerService.allocate()
 
   private async startTranscoding(file: IMediaFile, quality: number, settings: any, startSeconds: number = 0, isFiller: boolean = false): Promise<void> {
     const processKey = `${file._id}_${quality}`;
@@ -396,13 +510,25 @@ export class TranscodingService {
     await mkdir(outputDir, { recursive: true });
 
     const fullPath = path.join(this.mediaRoot, file.path);
-    const encoder = await this.getEncoder(settings);
+    const allocation = this.gpuManager.allocate({
+      preferredCodec: settings?.gpuConfig?.preferredCodec || 'auto',
+      resolution: file.metadata?.resolution,
+      isFiller: isFiller
+    });
+    const encoder = allocation.encoderName;
     
-    const startSegmentIndex = Math.floor(startSeconds / 6);
+    const startSegmentIndex = Math.floor(startSeconds / this.SEGMENT_DURATION);
 
     return new Promise((resolve, reject) => {
+      const scaleFilter = allocation.scaleFilterName === 'vpp_qsv' 
+        ? `vpp_qsv=w=-1:h=${quality}`
+        : `${allocation.scaleFilterName}=-2:${quality}`;
+
       const command = ffmpeg(fullPath)
-        .inputOptions(startSeconds > 0 ? [`-ss ${startSeconds}`] : [])
+        .inputOptions([
+          ...allocation.hwaccelArgs,
+          ...(startSeconds > 0 ? ['-ss', startSeconds.toString()] : []),
+        ])
         .outputOptions([
           '-c:v', encoder,
           '-preset', 'veryfast',
@@ -410,19 +536,20 @@ export class TranscodingService {
           '-sc_threshold', '0',
           '-map', '0:v:0?',
           '-map', '0:a:0?',
-          '-vf', `scale=-2:${quality}`,
+          '-vf', scaleFilter,
           '-c:a', 'aac',
           '-b:a', '128k',
           '-ac', '2',
           '-f', 'hls',
-          '-hls_time', '6',
+          '-hls_time', this.SEGMENT_DURATION.toString(),
           '-hls_list_size', '0',
           '-hls_flags', 'temp_file',
           '-start_number', startSegmentIndex.toString(),
           '-output_ts_offset', startSeconds.toString(),
           '-hls_segment_filename', path.join(outputDir, 'seg_%03d.ts'),
         ])
-        .on('start', () => {
+        .on('start', (cmdLine) => {
+          console.log(`[FFmpeg Cmd] ${cmdLine}`);
           console.log(`Started ${isFiller ? 'filler' : 'interactive'} transcoding ${file.originalName} from ${startSeconds}s using ${encoder}`);
           
           // Both modes resolve immediately after launch for better responsiveness
@@ -432,9 +559,10 @@ export class TranscodingService {
           // If this is a filler, we can set priority after process has stabilized
           // Note: fluent-ffmpeg doesn't expose pid immediately in some environments
         })
-        .on('error', (err) => {
+        .on('error', (err, stdout, stderr) => {
           if (!err.message.includes('SIGKILL')) {
             console.error(`${isFiller ? 'FILLER' : 'JIT'} error [${encoder}]: ${err.message}`);
+            if (stderr) console.error(`[FFmpeg stderr]:\n${stderr}`);
           }
           map.delete(processKey);
           reject(err);
@@ -496,7 +624,7 @@ export class TranscodingService {
     const duration = file.metadata?.duration || 0;
     if (duration <= 0) return;
 
-    const totalSegments = Math.ceil(duration / 6);
+    const totalSegments = Math.ceil(duration / this.SEGMENT_DURATION);
     
     // Read directory — fast filenames only
     const entries = await readdir(outputDir).catch(() => []);
@@ -516,7 +644,7 @@ export class TranscodingService {
     }
 
     if (firstMissing !== -1) {
-      this.backgroundQueue.push({ file, quality, startSeconds: firstMissing * 6, priority });
+      this.backgroundQueue.push({ file, quality, startSeconds: firstMissing * this.SEGMENT_DURATION, priority });
       // Sort: higher priority first
       this.backgroundQueue.sort((a, b) => b.priority - a.priority);
       this.processBackgroundQueue();
@@ -588,12 +716,6 @@ export class TranscodingService {
 
         const task = this.backgroundQueue.shift()!;
         const processKey = `${task.file._id}_${task.quality}`;
-
-        // If an interactive process is already running for this file/quality, skip it for now
-        if (this.activeJitProcesses.has(processKey)) {
-          console.log(`DISK: Skipping background filler for ${task.file.originalName} (${task.quality}p) - interactive active`);
-          continue;
-        }
 
         console.log(`DISK: Starting background filler: ${task.file.originalName} (${task.quality}p) from ${task.startSeconds}s (Priority: ${task.priority})`);
         

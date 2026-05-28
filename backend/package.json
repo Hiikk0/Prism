@@ -32,6 +32,7 @@
     "lru-cache": "^11.3.6",
     "mongoose": "^9.3.1",
     "music-metadata": "^11.12.3",
+    "p-limit": "^3.1.0",
     "pino": "^10.3.1",
     "pino-roll": "^4.0.0",
     "sanitize-filename": "1.6.4",

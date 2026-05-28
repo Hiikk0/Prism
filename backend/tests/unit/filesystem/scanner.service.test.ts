@@ -10,6 +10,7 @@ import { SettingsRepository } from '@/domains/identity/repositories/settings.rep
 jest.mock('@/domains/filesystem/repositories/mediafile.repository');
 jest.mock('@/domains/filesystem/services/media-processor.service');
 jest.mock('@/domains/identity/repositories/settings.repository');
+jest.mock('@/domains/filesystem/services/gpu-manager.service');
 jest.mock('@/domains/filesystem/utils/hash.util');
 jest.mock('load-esm');
 jest.mock('fs/promises');
@@ -35,7 +36,8 @@ describe('ScannerService', () => {
             'C:/th',
             'C:/pr',
             'C:/sub',
-            'C:/wf'
+            'C:/wf',
+            {} as any // gpuManager (mocked)
         ) as jest.Mocked<MediaProcessorService>;
 
         mockSettingsRepo.getSettings.mockResolvedValue({

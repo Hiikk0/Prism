@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+backend/dist
+frontend/dist
+.git
+.vscode
+.cache
+media/.cache
+media/*
+*.log
+.env
+.agent
+.antigravity

@@ -4,9 +4,11 @@ import ffmpeg from 'fluent-ffmpeg';
 import { loadEsm } from 'load-esm';
 
 import { SettingsRepository } from '@/domains/identity/repositories/settings.repository';
+import { GpuManagerService } from '@/domains/filesystem/services/gpu-manager.service';
 
 jest.mock('@/domains/filesystem/repositories/mediafile.repository');
 jest.mock('@/domains/identity/repositories/settings.repository');
+jest.mock('@/domains/filesystem/services/gpu-manager.service');
 jest.mock('fluent-ffmpeg');
 jest.mock('load-esm');
 jest.mock('fs/promises', () => ({
@@ -76,6 +78,9 @@ describe('MediaProcessorService', () => {
         mockSettingsRepo = new SettingsRepository() as jest.Mocked<SettingsRepository>;
         mockSettingsRepo.getSettings.mockResolvedValue({ hardwareEncoder: 'cpu_h264' } as any);
 
+        const mockGpuManager = new GpuManagerService() as jest.Mocked<GpuManagerService>;
+        mockGpuManager.allocate = jest.fn().mockReturnValue({ encoderName: 'libx264', hwaccelArgs: [] });
+
         mediaProcessorService = new MediaProcessorService(
           mockRepo, 
           mockSettingsRepo,
@@ -83,7 +88,8 @@ describe('MediaProcessorService', () => {
           'C:/media/.cache/thumbnails', 
           'C:/media/.cache/preview', 
           'C:/media/.cache/subtitles',
-          'C:/media/.cache/waveforms'
+          'C:/media/.cache/waveforms',
+          mockGpuManager
         );
         
         mockMm = {
