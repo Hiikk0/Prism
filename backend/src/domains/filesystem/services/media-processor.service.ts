@@ -5,8 +5,7 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffprobeInstaller from '@ffprobe-installer/ffprobe';
 import sharp from 'sharp';
 
-ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || ffmpegInstaller.path);
-ffmpeg.setFfprobePath(process.env.FFPROBE_PATH || ffprobeInstaller.path);
+// NOTE: ffmpeg paths are set in the constructor (after dotenv has loaded), not at module level.
 
 import { loadEsm } from 'load-esm';
 import { IMediaMetadata, IMediaFile } from '../models/mediafile.model';
@@ -32,6 +31,9 @@ export class MediaProcessorService {
     private gpuManager: GpuManagerService,
     previewConcurrency: number = 1
   ) {
+    // Set ffmpeg paths here (after dotenv.config() has run in server.ts)
+    ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || ffmpegInstaller.path);
+    ffmpeg.setFfprobePath(process.env.FFPROBE_PATH || ffprobeInstaller.path);
     this.previewLimiter = pLimit(previewConcurrency);
   }
 

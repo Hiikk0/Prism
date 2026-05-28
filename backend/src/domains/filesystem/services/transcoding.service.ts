@@ -204,7 +204,7 @@ export class TranscodingService {
             const promise = this.startTranscoding(file, quality, settings, requestedTime);
             
             // Trigger lookahead/filler to fill in gaps from 0s if we jumped (or started)
-            if (settings.transcodeMode === 'DISK') {
+            if (settings.transcodeMode === 'DISK' || settings.transcodeMode === 'JIT') {
                this.triggerBackgroundFiller(file, quality, settings, 0).catch(() => {});
             }
 
@@ -286,7 +286,7 @@ export class TranscodingService {
     if (file.metadata?.resolution) {
       const width = parseInt((file.metadata.resolution as string).split('x')[0], 10);
       if (!isNaN(width) && width > 7680) {
-        poolSize = 0; // Disable lookahead completely for extreme resolutions (16K) to avoid GPU memory overflow
+        poolSize = 1; // Limit lookahead to primary GPU only for extreme resolutions (16K)
       }
     }
 
@@ -344,6 +344,10 @@ export class TranscodingService {
     const segPath = path.join(outputDir, `seg_${segmentIndex.toString().padStart(3, '0')}.ts`);
 
     return new Promise((resolve, reject) => {
+      const scaleFilter = allocation.scaleFilterName === 'vpp_qsv'
+        ? `vpp_qsv=w=-1:h=${quality}`
+        : `${allocation.scaleFilterName}=-2:${quality}`;
+
       ffmpeg(fullPath)
         .inputOptions([
           ...allocation.hwaccelArgs,
@@ -356,7 +360,7 @@ export class TranscodingService {
           '-sc_threshold', '0',
           '-map', '0:v:0?',
           '-map', '0:a:0?',
-          '-vf', `scale=-2:${quality}`,
+          '-vf', scaleFilter,
           '-c:a', 'aac',
           '-b:a', '128k',
           '-ac', '2',
@@ -573,7 +577,7 @@ export class TranscodingService {
           
           // If filler finished a chunk, check if more gaps remain
           // OR if interactive finished, resume filler to fill gaps from skips
-          if (settings.transcodeMode === 'DISK') {
+          if (settings.transcodeMode === 'DISK' || settings.transcodeMode === 'JIT') {
             this.triggerBackgroundFiller(file, quality, settings, isFiller ? 0 : 1).catch(() => {});
           }
         });
@@ -703,7 +707,7 @@ export class TranscodingService {
     try {
       while (this.backgroundQueue.length > 0) {
         const settings = await this.settingsRepository.getSettings();
-        if (!settings || settings.transcodeMode !== 'DISK') {
+        if (!settings || (settings.transcodeMode !== 'DISK' && settings.transcodeMode !== 'JIT')) {
           this.backgroundQueue = [];
           break;
         }

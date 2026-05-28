@@ -25,10 +25,6 @@ describe('GpuManagerService', () => {
   // ─────────────────────────────────────────────
   describe('discoverEncoders()', () => {
     it('should parse ffmpeg -encoders output and return only video hw encoders', async () => {
-      // ffmpeg -encoders lists lines like:
-      //  V..... h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)
-      //  V..... h264_qsv             H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (Intel Quick Sync Video acceleration) (codec h264)
-      //  A..... aac                  AAC (Advanced Audio Coding) (codec aac)
       mockExecSync.mockReturnValueOnce(Buffer.from(
         ' V..... h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)\n' +
         ' V..... hevc_nvenc           NVIDIA NVENC hevc encoder (codec hevc)\n' +
@@ -41,7 +37,6 @@ describe('GpuManagerService', () => {
       const manager = createTestManager();
       const encoders = await manager.discoverEncoders();
 
-      // Should include only hardware video encoders, not libx264 (software) or aac (audio)
       expect(encoders).toContain('h264_nvenc');
       expect(encoders).toContain('hevc_nvenc');
       expect(encoders).toContain('h264_qsv');
@@ -66,91 +61,140 @@ describe('GpuManagerService', () => {
   // ─────────────────────────────────────────────
   describe('benchmarkEncoder()', () => {
     it('should return measured FPS for a working encoder', async () => {
-      // Simulated ffmpeg benchmark output:
-      // frame=   30 fps= 120 q=... size=... time=00:00:01.00 ...
       mockExecSync.mockReturnValueOnce(Buffer.from(
         'frame=   30 fps= 120 q=23.0 size=     256kB time=00:00:01.00 bitrate= 2097.2kbits/s speed=4.00x\n'
       ));
 
       const manager = createTestManager();
-      const fps = await manager.benchmarkEncoder('h264_nvenc');
+      const result = await manager.benchmarkEncoder('h264_nvenc');
 
-      expect(fps).toBeGreaterThan(0);
-      expect(fps).toBe(120);
+      expect(result.fps).toBe(120);
     });
 
-    it('should return 0 for an encoder that crashes (e.g. qsv on nvidia)', async () => {
+    it('should parse device name from D3D11VA output', async () => {
+      mockExecSync.mockReturnValueOnce(Buffer.from(
+        '[D3D11VA @ 000001] Using device 8086:56a0 (Intel(R) Arc(TM) A770 Graphics).\n' +
+        'frame=   30 fps= 120 q=23.0 size=     256kB time=00:00:01.00\n'
+      ));
+
+      const manager = createTestManager();
+      const result = await manager.benchmarkEncoder('h264_qsv', 0);
+
+      expect(result.fps).toBe(120);
+      expect(result.deviceName).toBe('Intel(R) Arc(TM) A770 Graphics');
+    });
+
+    it('should return fps=0 for an encoder that crashes', async () => {
       mockExecSync.mockImplementationOnce(() => {
         throw new Error('Error initializing an MFX session: -3');
       });
 
       const manager = createTestManager();
-      const fps = await manager.benchmarkEncoder('h264_qsv');
+      const result = await manager.benchmarkEncoder('h264_qsv');
 
-      expect(fps).toBe(0);
+      expect(result.fps).toBe(0);
     });
 
-    it('should return 0 for an encoder with unparseable output', async () => {
+    it('should return fps=0 for an encoder with unparseable output', async () => {
       mockExecSync.mockReturnValueOnce(Buffer.from('some garbage output'));
 
       const manager = createTestManager();
-      const fps = await manager.benchmarkEncoder('h264_amf');
+      const result = await manager.benchmarkEncoder('h264_amf');
 
-      expect(fps).toBe(0);
+      expect(result.fps).toBe(0);
     });
   });
 
   // ─────────────────────────────────────────────
-  // 3. Full initialization: discover + benchmark + rank
+  // 3. Full initialization: physical GPU device model
   // ─────────────────────────────────────────────
   describe('initialize()', () => {
-    it('should rank GPUs by benchmark FPS (fastest first), not by vendor', async () => {
+    it('should create physical GPU devices with codec lists (sorted by FPS)', async () => {
       const manager = createTestManager();
 
-      // Mock discover: find 3 encoders
+      // 3 encoders from 3 different vendors (single-device each)
       jest.spyOn(manager, 'discoverEncoders').mockResolvedValue([
         'h264_nvenc', 'h264_qsv', 'h264_amf',
       ]);
 
-      // Mock benchmark: AMF is fastest (imagine a beefy RX 9900 vs old GTS 260 nvidia)
+      // AMF fastest, QSV middle, NVENC slowest
       jest.spyOn(manager, 'benchmarkEncoder')
-        .mockResolvedValueOnce(45)   // h264_nvenc = 45 fps
-        .mockResolvedValueOnce(85)   // h264_qsv  = 85 fps
-        .mockResolvedValueOnce(200); // h264_amf  = 200 fps
+        // NVENC: multi-device vendor, probe device 0-3
+        .mockResolvedValueOnce({ fps: 45, deviceName: 'NVIDIA GPU' })  // nvenc device 0
+        .mockResolvedValueOnce({ fps: 0 })   // nvenc device 1 — doesn't exist
+        .mockResolvedValueOnce({ fps: 0 })   // nvenc device 2
+        .mockResolvedValueOnce({ fps: 0 })   // nvenc device 3
+        // QSV: multi-device vendor, probe device 0-3
+        .mockResolvedValueOnce({ fps: 85, deviceName: 'Intel GPU' })   // qsv device 0
+        .mockResolvedValueOnce({ fps: 0 })   // qsv device 1
+        .mockResolvedValueOnce({ fps: 0 })   // qsv device 2
+        .mockResolvedValueOnce({ fps: 0 })   // qsv device 3
+        // AMF: single-device vendor
+        .mockResolvedValueOnce({ fps: 200, deviceName: 'AMD GPU' });   // amf
 
       await manager.initialize();
 
       const devices = manager.getDevices();
       expect(devices.length).toBe(3);
       // Fastest (AMF) should be first
-      expect(devices[0].encoderName).toBe('h264_amf');
-      expect(devices[0].benchmarkFps).toBe(200);
-      // Second fastest
-      expect(devices[1].encoderName).toBe('h264_qsv');
-      expect(devices[1].benchmarkFps).toBe(85);
-      // Slowest
-      expect(devices[2].encoderName).toBe('h264_nvenc');
-      expect(devices[2].benchmarkFps).toBe(45);
+      expect(devices[0].primaryCodec).toBe('h264_amf');
+      expect(devices[0].bestFps).toBe(200);
+      // Second (QSV)
+      expect(devices[1].primaryCodec).toBe('h264_qsv');
+      expect(devices[1].bestFps).toBe(85);
+      // Slowest (NVENC)
+      expect(devices[2].primaryCodec).toBe('h264_nvenc');
+      expect(devices[2].bestFps).toBe(45);
     });
 
-    it('should exclude encoders that failed benchmark (fps=0)', async () => {
+    it('should detect multiple physical GPUs for multi-device vendors (Intel QSV)', async () => {
       const manager = createTestManager();
 
       jest.spyOn(manager, 'discoverEncoders').mockResolvedValue([
-        'h264_nvenc', 'h264_qsv', 'h264_amf',
+        'h264_qsv', 'hevc_qsv',
       ]);
 
-      // QSV fails (e.g. tried qsv on nvidia machine), others pass
       jest.spyOn(manager, 'benchmarkEncoder')
-        .mockResolvedValueOnce(120)  // nvenc ok
-        .mockResolvedValueOnce(0)    // qsv failed
-        .mockResolvedValueOnce(90);  // amf ok
+        // Device 0: probe with h264_qsv, then benchmark hevc_qsv
+        .mockResolvedValueOnce({ fps: 100, deviceName: 'Arc A770' })   // h264_qsv device 0 (probe)
+        .mockResolvedValueOnce({ fps: 80 })                              // hevc_qsv device 0
+        // Device 1: probe with h264_qsv, then benchmark hevc_qsv
+        .mockResolvedValueOnce({ fps: 50, deviceName: 'UHD 770' })     // h264_qsv device 1 (probe)
+        .mockResolvedValueOnce({ fps: 40 })                              // hevc_qsv device 1
+        // Device 2 & 3: probe fails
+        .mockResolvedValueOnce({ fps: 0 })                              // h264_qsv device 2 — phantom
+        .mockResolvedValueOnce({ fps: 0 });                             // h264_qsv device 3 — phantom
 
       await manager.initialize();
 
       const devices = manager.getDevices();
       expect(devices.length).toBe(2);
-      expect(devices.map(d => d.encoderName)).not.toContain('h264_qsv');
+      // Device 0 (Arc) — fastest
+      expect(devices[0].deviceName).toBe('Arc A770');
+      expect(devices[0].bestFps).toBe(100);
+      expect(devices[0].codecs).toHaveLength(2);
+      expect(devices[0].codecs.map(c => c.encoderName)).toContain('h264_qsv');
+      expect(devices[0].codecs.map(c => c.encoderName)).toContain('hevc_qsv');
+      // Device 1 (UHD) — slower
+      expect(devices[1].deviceName).toBe('UHD 770');
+      expect(devices[1].bestFps).toBe(50);
+    });
+
+    it('should exclude phantom devices that fail the probe', async () => {
+      const manager = createTestManager();
+
+      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_qsv']);
+
+      jest.spyOn(manager, 'benchmarkEncoder')
+        .mockResolvedValueOnce({ fps: 100 })   // device 0 ok
+        .mockResolvedValueOnce({ fps: 50 })    // device 1 ok
+        .mockResolvedValueOnce({ fps: 0 })     // device 2 — Microsoft Basic Render Driver
+        .mockResolvedValueOnce({ fps: 0 });    // device 3 — doesn't exist
+
+      await manager.initialize();
+
+      const devices = manager.getDevices();
+      expect(devices.length).toBe(2);
     });
 
     it('should fallback to libx264 (CPU) if ALL hardware encoders fail', async () => {
@@ -160,16 +204,23 @@ describe('GpuManagerService', () => {
         'h264_nvenc', 'h264_qsv',
       ]);
 
-      // Both fail
       jest.spyOn(manager, 'benchmarkEncoder')
-        .mockResolvedValueOnce(0)
-        .mockResolvedValueOnce(0);
+        // nvenc: all devices fail
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        // qsv: all devices fail
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 });
 
       await manager.initialize();
 
       const devices = manager.getDevices();
       expect(devices.length).toBe(1);
-      expect(devices[0].encoderName).toBe('libx264');
+      expect(devices[0].primaryCodec).toBe('libx264');
       expect(devices[0].vendor).toBe('cpu');
     });
 
@@ -182,59 +233,119 @@ describe('GpuManagerService', () => {
 
       const devices = manager.getDevices();
       expect(devices.length).toBe(1);
-      expect(devices[0].encoderName).toBe('libx264');
+      expect(devices[0].primaryCodec).toBe('libx264');
     });
   });
 
   // ─────────────────────────────────────────────
-  // 4. preferredCodec override
+  // 4. Allocation: codec consistency
   // ─────────────────────────────────────────────
   describe('allocate() with preferredCodec', () => {
-    it('should use preferredCodec over auto-detected fastest encoder', async () => {
+    it('should use preferredCodec if available on the target device', async () => {
       const manager = createTestManager();
 
       jest.spyOn(manager, 'discoverEncoders').mockResolvedValue([
-        'h264_nvenc', 'h264_amf',
+        'h264_qsv', 'hevc_qsv',
       ]);
       jest.spyOn(manager, 'benchmarkEncoder')
-        .mockResolvedValueOnce(200)  // nvenc fastest
-        .mockResolvedValueOnce(90);  // amf slower
+        .mockResolvedValueOnce({ fps: 100 })   // h264_qsv device 0 (probe)
+        .mockResolvedValueOnce({ fps: 80 })    // hevc_qsv device 0 (benchmark)
+        .mockResolvedValueOnce({ fps: 0 })     // h264_qsv device 1 (probe fail)
+        .mockResolvedValueOnce({ fps: 0 })     // h264_qsv device 2 (probe fail)
+        .mockResolvedValueOnce({ fps: 0 });    // h264_qsv device 3 (probe fail)
 
       await manager.initialize();
 
-      // User explicitly chose libx264 for quality
-      const allocation = manager.allocate({ preferredCodec: 'libx264' });
-      expect(allocation.encoderName).toBe('libx264');
+      const allocation = manager.allocate({ preferredCodec: 'hevc_qsv' });
+      expect(allocation.encoderName).toBe('hevc_qsv');
+    });
+
+    it('should fallback to primaryCodec if preferred is not available on device', async () => {
+      const manager = createTestManager();
+
+      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_qsv']);
+      jest.spyOn(manager, 'benchmarkEncoder')
+        .mockResolvedValueOnce({ fps: 100 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 });
+
+      await manager.initialize();
+
+      const allocation = manager.allocate({ preferredCodec: 'av1_qsv' });
+      expect(allocation.encoderName).toBe('h264_qsv'); // fallback to primary
     });
 
     it('should fallback to auto if preferredCodec is "auto"', async () => {
       const manager = createTestManager();
 
-      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_nvenc']);
-      jest.spyOn(manager, 'benchmarkEncoder').mockResolvedValueOnce(150);
+      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_qsv']);
+      jest.spyOn(manager, 'benchmarkEncoder')
+        .mockResolvedValueOnce({ fps: 150 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 });
 
       await manager.initialize();
 
       const allocation = manager.allocate({ preferredCodec: 'auto' });
-      expect(allocation.encoderName).toBe('h264_nvenc');
+      expect(allocation.encoderName).toBe('h264_qsv');
     });
   });
 
   // ─────────────────────────────────────────────
-  // 5. Logging: benchmark results are logged
+  // 5. Allocation: round-robin for segments
+  // ─────────────────────────────────────────────
+  describe('allocateForSegment()', () => {
+    it('should round-robin segments across physical GPUs with consistent codec', async () => {
+      const manager = createTestManager();
+
+      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue([
+        'h264_qsv', 'hevc_qsv',
+      ]);
+      jest.spyOn(manager, 'benchmarkEncoder')
+        .mockResolvedValueOnce({ fps: 100, deviceName: 'Arc A770' })
+        .mockResolvedValueOnce({ fps: 50, deviceName: 'UHD 770' })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 80 })    // hevc device 0
+        .mockResolvedValueOnce({ fps: 40 });   // hevc device 1
+
+      await manager.initialize();
+
+      const seg0 = manager.allocateForSegment(0);
+      const seg1 = manager.allocateForSegment(1);
+      const seg2 = manager.allocateForSegment(2);
+
+      // All segments use the same codec (h264_qsv = primary)
+      expect(seg0.encoderName).toBe('h264_qsv');
+      expect(seg1.encoderName).toBe('h264_qsv');
+      expect(seg2.encoderName).toBe('h264_qsv');
+
+      // But distributed across GPUs (round-robin on 2 devices)
+      // seg0 → device 0, seg1 → device 1, seg2 → device 0
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // 6. Logging: benchmark results are logged
   // ─────────────────────────────────────────────
   describe('logging', () => {
     it('should log benchmark results during initialization', async () => {
       const logSpy = jest.spyOn(console, 'log').mockImplementation();
 
       const manager = createTestManager();
-      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_nvenc']);
-      jest.spyOn(manager, 'benchmarkEncoder').mockResolvedValueOnce(120);
+      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_qsv']);
+      jest.spyOn(manager, 'benchmarkEncoder')
+        .mockResolvedValueOnce({ fps: 120, deviceName: 'Arc A770' })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 })
+        .mockResolvedValueOnce({ fps: 0 });
 
       await manager.initialize();
 
       expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('h264_nvenc')
+        expect.stringContaining('h264_qsv')
       );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining('120')

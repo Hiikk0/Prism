@@ -2,6 +2,22 @@ import { GpuManagerService, GpuDevice } from '@/domains/filesystem/services/gpu-
 
 jest.mock('child_process');
 
+/**
+ * Helper to create a GpuDevice fixture in the new physical-GPU model.
+ */
+function makeDevice(
+  primaryCodec: string, vendor: GpuDevice['vendor'], bestFps: number,
+  opts?: { deviceIndex?: number, codecs?: { encoderName: string, benchmarkFps: number }[] }
+): GpuDevice {
+  return {
+    vendor,
+    deviceIndex: opts?.deviceIndex,
+    codecs: opts?.codecs || [{ encoderName: primaryCodec, benchmarkFps: bestFps }],
+    primaryCodec,
+    bestFps,
+  };
+}
+
 describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
   let gpuManager: GpuManagerService;
 
@@ -14,12 +30,11 @@ describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
   // 1. allocateForSegment() round-robin across GPUs
   // ─────────────────────────────────────────────
   describe('allocateForSegment()', () => {
-    it('should distribute segments across multiple GPUs in round-robin', () => {
-      // Manually set devices to simulate 2 GPUs
+    it('should distribute segments across multiple physical GPUs in round-robin', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'h264_nvenc', vendor: 'nvidia', benchmarkFps: 120 },
-        { encoderName: 'h264_qsv', vendor: 'intel', benchmarkFps: 80 },
-      ] as GpuDevice[];
+        makeDevice('h264_nvenc', 'nvidia', 120, { deviceIndex: 0 }),
+        makeDevice('h264_qsv', 'intel', 80, { deviceIndex: 0 }),
+      ];
       (gpuManager as any).initialized = true;
 
       const seg0 = gpuManager.allocateForSegment(0);
@@ -27,7 +42,7 @@ describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
       const seg2 = gpuManager.allocateForSegment(2);
       const seg3 = gpuManager.allocateForSegment(3);
 
-      // Round-robin: 0→nvenc, 1→qsv, 2→nvenc, 3→qsv
+      // Round-robin: 0→nvenc(GPU0), 1→qsv(GPU1), 2→nvenc(GPU0), 3→qsv(GPU1)
       expect(seg0.encoderName).toBe('h264_nvenc');
       expect(seg1.encoderName).toBe('h264_qsv');
       expect(seg2.encoderName).toBe('h264_nvenc');
@@ -36,8 +51,8 @@ describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
 
     it('should use single GPU when only one is available', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'h264_nvenc', vendor: 'nvidia', benchmarkFps: 120 },
-      ] as GpuDevice[];
+        makeDevice('h264_nvenc', 'nvidia', 120, { deviceIndex: 0 }),
+      ];
       (gpuManager as any).initialized = true;
 
       const seg0 = gpuManager.allocateForSegment(0);
@@ -47,12 +62,42 @@ describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
       expect(seg1.encoderName).toBe('h264_nvenc');
     });
 
+    it('should use consistent codec when round-robin across same-vendor GPUs', () => {
+      // Simulates Intel UHD 770 + Arc A770 — both support h264_qsv and hevc_qsv
+      (gpuManager as any).devices = [
+        makeDevice('h264_qsv', 'intel', 100, {
+          deviceIndex: 0,
+          codecs: [
+            { encoderName: 'h264_qsv', benchmarkFps: 100 },
+            { encoderName: 'hevc_qsv', benchmarkFps: 80 },
+          ],
+        }),
+        makeDevice('h264_qsv', 'intel', 50, {
+          deviceIndex: 1,
+          codecs: [
+            { encoderName: 'h264_qsv', benchmarkFps: 50 },
+            { encoderName: 'hevc_qsv', benchmarkFps: 40 },
+          ],
+        }),
+      ];
+      (gpuManager as any).initialized = true;
+
+      // All segments should use h264_qsv (primaryCodec) regardless of which GPU
+      const seg0 = gpuManager.allocateForSegment(0);
+      const seg1 = gpuManager.allocateForSegment(1);
+      const seg2 = gpuManager.allocateForSegment(2);
+
+      expect(seg0.encoderName).toBe('h264_qsv');
+      expect(seg1.encoderName).toBe('h264_qsv');
+      expect(seg2.encoderName).toBe('h264_qsv');
+    });
+
     it('should fall back to libx264 when no devices available', () => {
       (gpuManager as any).devices = [];
       (gpuManager as any).initialized = true;
 
       const seg0 = gpuManager.allocateForSegment(0);
-      expect(seg0.encoderName).toBe('libx264');
+      expect(seg0.encoderName).toContain('libx264');
     });
   });
 
@@ -62,43 +107,39 @@ describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
   describe('canBenefitFromPool()', () => {
     it('should return true when best GPU alone cannot reach target FPS', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'h264_nvenc', vendor: 'nvidia', benchmarkFps: 18 },
-        { encoderName: 'h264_qsv', vendor: 'intel', benchmarkFps: 12 },
-      ] as GpuDevice[];
+        makeDevice('h264_nvenc', 'nvidia', 18, { deviceIndex: 0 }),
+        makeDevice('h264_qsv', 'intel', 12, { deviceIndex: 0 }),
+      ];
       (gpuManager as any).initialized = true;
 
-      // Best GPU = 18fps, target = 30fps → need pool
       expect(gpuManager.canBenefitFromPool(30)).toBe(true);
     });
 
     it('should return false when best GPU alone can handle target FPS', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'h264_nvenc', vendor: 'nvidia', benchmarkFps: 120 },
-        { encoderName: 'h264_qsv', vendor: 'intel', benchmarkFps: 80 },
-      ] as GpuDevice[];
+        makeDevice('h264_nvenc', 'nvidia', 120, { deviceIndex: 0 }),
+        makeDevice('h264_qsv', 'intel', 80, { deviceIndex: 0 }),
+      ];
       (gpuManager as any).initialized = true;
 
-      // Best GPU = 120fps, target = 30fps → no need for pool
       expect(gpuManager.canBenefitFromPool(30)).toBe(false);
     });
 
     it('should return false when only CPU fallback is available', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'libx264', vendor: 'cpu', benchmarkFps: 0 },
-      ] as GpuDevice[];
+        makeDevice('libx264', 'cpu', 0),
+      ];
       (gpuManager as any).initialized = true;
 
-      // CPU has 0 benchmarkFps — pool makes no sense
       expect(gpuManager.canBenefitFromPool(30)).toBe(false);
     });
 
     it('should return false with single device even if slow', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'h264_nvenc', vendor: 'nvidia', benchmarkFps: 15 },
-      ] as GpuDevice[];
+        makeDevice('h264_nvenc', 'nvidia', 15, { deviceIndex: 0 }),
+      ];
       (gpuManager as any).initialized = true;
 
-      // Only 1 GPU — can't pool, even if slow
       expect(gpuManager.canBenefitFromPool(30)).toBe(false);
     });
   });
@@ -107,11 +148,11 @@ describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
   // 3. getPoolSize() — how many GPUs to use concurrently
   // ─────────────────────────────────────────────
   describe('getPoolSize()', () => {
-    it('should return number of available HW devices', () => {
+    it('should return number of available physical devices', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'h264_nvenc', vendor: 'nvidia', benchmarkFps: 120 },
-        { encoderName: 'h264_qsv', vendor: 'intel', benchmarkFps: 80 },
-      ] as GpuDevice[];
+        makeDevice('h264_nvenc', 'nvidia', 120, { deviceIndex: 0 }),
+        makeDevice('h264_qsv', 'intel', 80, { deviceIndex: 0 }),
+      ];
       (gpuManager as any).initialized = true;
 
       expect(gpuManager.getPoolSize()).toBe(2);
@@ -119,8 +160,8 @@ describe('GpuManager — Worker Pool (Multi-GPU Segment Distribution)', () => {
 
     it('should return 1 for CPU-only fallback', () => {
       (gpuManager as any).devices = [
-        { encoderName: 'libx264', vendor: 'cpu', benchmarkFps: 0 },
-      ] as GpuDevice[];
+        makeDevice('libx264', 'cpu', 0),
+      ];
       (gpuManager as any).initialized = true;
 
       expect(gpuManager.getPoolSize()).toBe(1);

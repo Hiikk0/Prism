@@ -1,27 +1,32 @@
 import { execSync } from 'child_process';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 
-const FFMPEG_BIN = process.env.FFMPEG_PATH || ffmpegInstaller.path;
-
 // ─────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────
 
-export interface GpuDevice {
-  encoderName: string;       // 'h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264'
-  vendor: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
+export interface GpuCodecInfo {
+  encoderName: string;       // 'h264_qsv', 'hevc_qsv', 'av1_qsv'
   benchmarkFps: number;      // measured FPS from synthetic probe
+}
+
+export interface GpuDevice {
+  vendor: 'nvidia' | 'amd' | 'intel' | 'apple' | 'cpu';
   deviceIndex?: number;
+  deviceName?: string;        // e.g. 'Intel(R) Arc(TM) A770 Graphics'
+  codecs: GpuCodecInfo[];     // All codecs benchmarked on this physical device
+  primaryCodec: string;       // Default codec (most compatible, e.g. 'h264_qsv')
+  bestFps: number;            // FPS of the primary codec (for sorting)
 }
 
 export interface GpuAllocation {
   encoderName: string;
-  hwaccelArgs: string[];     // e.g. ['-hwaccel', 'cuda', '-hwaccel_device', '0']
+  hwaccelArgs: string[];     // e.g. ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv', ...]
   scaleFilterName: string;   // e.g. 'vpp_qsv' or 'scale_cuda' or 'scale'
 }
 
 interface AllocateOptions {
-  preferredCodec?: string;   // 'auto' | 'h264_nvenc' | 'libx264' etc.
+  preferredCodec?: string;   // 'auto' | 'h264_qsv' | 'libx264' etc.
   resolution?: string;       // e.g. '1920x1080' or '15360x8640'
   isFiller?: boolean;
 }
@@ -33,13 +38,16 @@ const VENDOR_MAP: Record<string, GpuDevice['vendor']> = {
   amf: 'amd',
   qsv: 'intel',
   videotoolbox: 'apple',
-  vaapi: 'intel', // VAAPI is most commonly Intel on Linux, but can be AMD
+  vaapi: 'intel',
 };
 
 // Known hardware encoder name patterns
 const HW_ENCODER_PATTERNS = [
   'nvenc', 'amf', 'qsv', 'videotoolbox', 'vaapi', 'v4l2m2m', 'rkmpp',
 ];
+
+// Vendors that support multiple physical GPU devices
+const MULTI_DEVICE_VENDORS: Set<GpuDevice['vendor']> = new Set(['intel', 'nvidia']);
 
 // ─────────────────────────────────────────────
 // Service
@@ -49,67 +57,60 @@ export class GpuManagerService {
   private devices: GpuDevice[] = [];
   private initialized = false;
 
+  /**
+   * Resolve FFmpeg binary path at call time (after dotenv has loaded).
+   * This MUST NOT be a top-level constant — env vars aren't available at import time.
+   */
+  private getFfmpegBin(): string {
+    return process.env.FFMPEG_PATH || ffmpegInstaller.path;
+  }
+
   private getHwaccelConfig(encoderName: string, deviceIndex?: number): { hwaccelArgs: string[], scaleFilterName: string } {
     if (encoderName.includes('qsv')) {
+      const args: string[] = ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'];
       if (typeof deviceIndex === 'number') {
-        return {
-          hwaccelArgs: [
-            '-hwaccel', 'qsv', 
-            '-hwaccel_output_format', 'qsv',
-            '-qsv_device', deviceIndex.toString()
-          ],
-          scaleFilterName: 'vpp_qsv'
-        };
+        // Use -init_hw_device for reliable device selection on multi-GPU Intel systems
+        args.unshift('-init_hw_device', `qsv=hw,child_device=${deviceIndex}`, '-filter_hw_device', 'hw');
       }
-      return {
-        hwaccelArgs: ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'],
-        scaleFilterName: 'vpp_qsv'
-      };
+      return { hwaccelArgs: args, scaleFilterName: 'vpp_qsv' };
     } else if (encoderName.includes('nvenc')) {
+      const args: string[] = ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
       if (typeof deviceIndex === 'number') {
-        return {
-          hwaccelArgs: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-hwaccel_device', deviceIndex.toString()],
-          scaleFilterName: 'scale_cuda'
-        };
+        args.push('-hwaccel_device', deviceIndex.toString());
       }
-      return {
-        hwaccelArgs: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
-        scaleFilterName: 'scale_cuda'
-      };
+      return { hwaccelArgs: args, scaleFilterName: 'scale_cuda' };
     } else if (encoderName.includes('amf')) {
       return {
         hwaccelArgs: ['-hwaccel', 'd3d11va', '-hwaccel_output_format', 'd3d11'],
-        scaleFilterName: 'scale' // AMF uses standard scale or scale_vulkan, d3d11 surface can be scaled usually
+        scaleFilterName: 'scale',
       };
     }
     
-    // CPU Fallback or auto
+    // CPU Fallback
     return {
-      hwaccelArgs: ['-hwaccel', 'auto'],
-      scaleFilterName: 'scale'
+      hwaccelArgs: [],
+      scaleFilterName: 'scale',
     };
   }
 
   /**
    * Discover available hardware video encoders by parsing `ffmpeg -encoders`.
-   * Returns an array of encoder names like ['h264_nvenc', 'h264_qsv', 'h264_amf'].
+   * Returns an array of encoder names like ['h264_nvenc', 'h264_qsv', 'hevc_qsv'].
    */
   async discoverEncoders(): Promise<string[]> {
     try {
-      const output = execSync(`"${FFMPEG_BIN}" -hide_banner -encoders 2>&1`, {
+      const ffmpegBin = this.getFfmpegBin();
+      const output = execSync(`"${ffmpegBin}" -hide_banner -encoders 2>&1`, {
         timeout: 10_000,
       }).toString();
 
       const encoders: string[] = [];
 
       for (const line of output.split('\n')) {
-        // Format: " V..... h264_nvenc   NVIDIA NVENC ..."
         const match = line.match(/^\s*V\S*\s+(\S+)/);
         if (!match) continue;
 
         const name = match[1];
-
-        // Only include known hardware encoders
         if (HW_ENCODER_PATTERNS.some(pattern => name.includes(pattern))) {
           encoders.push(name);
         }
@@ -123,61 +124,91 @@ export class GpuManagerService {
   }
 
   /**
-   * Run a short synthetic benchmark for a given encoder.
-   * Encodes ~1s of dummy video and parses the FPS from ffmpeg stderr output.
-   * Returns 0 if the encoder crashes or output is unparseable.
+   * Run a short synthetic benchmark for a given encoder on a specific device.
+   * Encodes ~1s of dummy video and parses the FPS from ffmpeg output.
+   * Returns 0 if the encoder crashes or is unavailable on the device.
    */
-  async benchmarkEncoder(encoderName: string, deviceIndex?: number): Promise<number> {
+  async benchmarkEncoder(encoderName: string, deviceIndex?: number): Promise<{ fps: number, deviceName?: string }> {
     try {
-      // Generate 30 frames of 720p black video and encode with the target encoder
-      const { hwaccelArgs } = this.getHwaccelConfig(encoderName, deviceIndex);
-      const hwaccelStr = hwaccelArgs.join(' ');
-      
-      const initHwArg = (deviceIndex !== undefined && encoderName.includes('qsv')) 
-        ? `-init_hw_device qsv=hw,child_device=${deviceIndex}` 
-        : '';
+      const ffmpegBin = this.getFfmpegBin();
+
+      // Build device-selection flag (only for multi-device vendors)
+      let deviceArg = '';
+      if (typeof deviceIndex === 'number') {
+        if (encoderName.includes('qsv')) {
+          deviceArg = `-init_hw_device qsv=hw,child_device=${deviceIndex}`;
+        } else if (encoderName.includes('nvenc')) {
+          // NVENC uses -gpu as an encoder option; for benchmark, pass via output opts
+          deviceArg = ''; // handled below in encoder options
+        }
+      }
+
+      // -vf format=nv12 ensures compatibility with h264, hevc, and av1 hardware encoders
+      const encoderOpts = encoderName.includes('nvenc') && typeof deviceIndex === 'number'
+        ? `-c:v ${encoderName} -gpu ${deviceIndex}`
+        : `-c:v ${encoderName}`;
 
       const cmd = [
-        `"${FFMPEG_BIN}" -hide_banner -y`,
-        initHwArg,
-        hwaccelStr,
+        `"${ffmpegBin}" -hide_banner -y`,
+        deviceArg,
         '-f lavfi -i nullsrc=s=1280x720:d=1:r=30',
-        `-c:v ${encoderName}`,
+        '-vf format=nv12',
+        encoderOpts,
         '-f null -',
         '2>&1',
       ].filter(Boolean).join(' ');
 
       const output = execSync(cmd, { timeout: 30_000 }).toString();
 
-      // Parse fps from output: match all occurrences of "fps=" and take the last one
-      const matches = [...output.matchAll(/fps=\s*([\d.]+)/g)];
-      if (matches.length > 0) {
-        const lastMatch = matches[matches.length - 1];
-        const fps = Math.round(parseFloat(lastMatch[1]));
-        // If encoder is so fast (or frames so few) that ffmpeg reports fps=0.0,
-        // we still return at least 1 because it successfully completed the task.
-        return Math.max(1, fps);
+      // Parse device name from D3D11VA output
+      let deviceName: string | undefined;
+      const deviceMatch = output.match(/Using device \S+ \((.+)\)\./);
+      if (deviceMatch) {
+        deviceName = deviceMatch[1];
       }
 
-      return 0;
+      // If QSV but no device name, it fell back to software mode (phantom) -> reject
+      if (encoderName.includes('qsv') && !deviceName) {
+        return { fps: 0, deviceName };
+      }
+
+      // Parse fps from output: prefer speed= since short encodes might show fps=0.0
+      let fps = 0;
+      const speedMatches = [...output.matchAll(/speed=\s*([\d.]+)x/g)];
+      if (speedMatches.length > 0) {
+        const lastMatch = speedMatches[speedMatches.length - 1];
+        fps = Math.round(parseFloat(lastMatch[1]) * 30); // benchmark uses 30fps
+      } else {
+        const fpsMatches = [...output.matchAll(/fps=\s*([\d.]+)/g)];
+        if (fpsMatches.length > 0) {
+          fps = Math.round(parseFloat(fpsMatches[fpsMatches.length - 1][1]));
+        }
+      }
+
+      if (fps > 0) {
+        return { fps: Math.max(1, fps), deviceName };
+      }
+
+      return { fps: 0, deviceName };
     } catch (e: any) {
-      // Encoder crashed or is unavailable (e.g. qsv on nvidia)
       const errOut = (e.stderr ? e.stderr.toString() : '') + (e.stdout ? e.stdout.toString() : '');
-      console.log(`[GpuManager] Benchmark error for ${encoderName}:`, errOut.trim() || e.message);
-      return 0;
+      console.log(`[GpuManager] Benchmark error for ${encoderName} (device ${deviceIndex ?? 'default'}):`, errOut.trim() || e.message);
+      return { fps: 0 };
     }
   }
 
   /**
    * Full initialization:
    * 1. Discover available HW encoders
-   * 2. Benchmark each one (probe)
-   * 3. Exclude failed ones
-   * 4. Rank by FPS (fastest first)
-   * 5. Fallback to CPU if nothing works
+   * 2. Group by vendor
+   * 3. Probe physical devices per vendor
+   * 4. Benchmark all codecs on each valid physical device
+   * 5. Build device list sorted by FPS (fastest first)
+   * 6. Fallback to CPU if nothing works
    */
   async initialize(): Promise<void> {
     console.log('[GpuManager] Starting GPU detection and benchmarking...');
+    console.log(`[GpuManager] Using ffmpeg: ${this.getFfmpegBin()}`);
 
     const discovered = await this.discoverEncoders();
 
@@ -190,58 +221,108 @@ export class GpuManagerService {
 
     console.log(`[GpuManager] Discovered ${discovered.length} hardware encoder(s): ${discovered.join(', ')}`);
 
-    const benchmarked: GpuDevice[] = [];
+    // Group encoders by vendor
+    const vendorGroups = new Map<GpuDevice['vendor'], string[]>();
+    for (const enc of discovered) {
+      const vendor = this.resolveVendor(enc);
+      if (!vendorGroups.has(vendor)) vendorGroups.set(vendor, []);
+      vendorGroups.get(vendor)!.push(enc);
+    }
 
-    for (const encoderName of discovered) {
-      if (encoderName.includes('qsv') || encoderName.includes('nvenc')) {
-        let foundAny = false;
-        // Test up to 4 potential GPUs
-        for (let i = 0; i < 4; i++) {
-          const fps = await this.benchmarkEncoder(encoderName, i);
-          if (fps > 0) {
-            console.log(`[GpuManager] Benchmark: ${encoderName} (GPU ${i}) = ${fps} fps ✓`);
-            benchmarked.push({
-              encoderName,
-              vendor: this.resolveVendor(encoderName),
-              benchmarkFps: fps,
-              deviceIndex: i
-            });
-            foundAny = true;
+    const physicalDevices: GpuDevice[] = [];
+
+    for (const [vendor, encoders] of vendorGroups) {
+      // Use the first h264 encoder as probe (most compatible)
+      const probeEncoder = encoders.find(e => e.startsWith('h264_')) || encoders[0];
+
+      if (MULTI_DEVICE_VENDORS.has(vendor)) {
+        // Probe up to 4 physical devices using the probe encoder
+        for (let devIdx = 0; devIdx < 4; devIdx++) {
+          const probeResult = await this.benchmarkEncoder(probeEncoder, devIdx);
+
+          if (probeResult.fps <= 0) {
+            console.log(`[GpuManager] Probe: ${probeEncoder} (device ${devIdx}) = FAILED ✗`);
+            continue;
           }
-        }
-        if (!foundAny) {
-          console.log(`[GpuManager] Benchmark: ${encoderName} = FAILED (all devices) ✗`);
+
+          console.log(`[GpuManager] Probe: ${probeEncoder} (device ${devIdx}) = ${probeResult.fps} fps ✓ [${probeResult.deviceName || 'unknown'}]`);
+
+          // Valid device found — benchmark all codecs of this vendor on it
+          const codecs: GpuCodecInfo[] = [{ encoderName: probeEncoder, benchmarkFps: probeResult.fps }];
+
+          for (const enc of encoders) {
+            if (enc === probeEncoder) continue; // Already probed
+            const result = await this.benchmarkEncoder(enc, devIdx);
+            if (result.fps > 0) {
+              console.log(`[GpuManager] Benchmark: ${enc} (device ${devIdx}) = ${result.fps} fps ✓`);
+              codecs.push({ encoderName: enc, benchmarkFps: result.fps });
+            } else {
+              console.log(`[GpuManager] Benchmark: ${enc} (device ${devIdx}) = FAILED ✗`);
+            }
+          }
+
+          physicalDevices.push({
+            vendor,
+            deviceIndex: devIdx,
+            deviceName: probeResult.deviceName,
+            codecs,
+            primaryCodec: probeEncoder,
+            bestFps: probeResult.fps,
+          });
         }
       } else {
-        const fps = await this.benchmarkEncoder(encoderName);
+        // Single-device vendor (AMF, VideoToolbox, etc.)
+        const codecs: GpuCodecInfo[] = [];
+        let bestFps = 0;
+        let primaryCodec = encoders[0];
+        let deviceName: string | undefined;
 
-        if (fps > 0) {
-          console.log(`[GpuManager] Benchmark: ${encoderName} = ${fps} fps ✓`);
-          benchmarked.push({
-            encoderName,
-            vendor: this.resolveVendor(encoderName),
-            benchmarkFps: fps,
-          });
-        } else {
-          console.log(`[GpuManager] Benchmark: ${encoderName} = FAILED (excluded from pool) ✗`);
+        for (const enc of encoders) {
+          const result = await this.benchmarkEncoder(enc);
+          if (result.fps > 0) {
+            console.log(`[GpuManager] Benchmark: ${enc} = ${result.fps} fps ✓`);
+            codecs.push({ encoderName: enc, benchmarkFps: result.fps });
+            if (!deviceName && result.deviceName) deviceName = result.deviceName;
+            // Prefer h264 as primary for HLS compatibility
+            if (enc.startsWith('h264_') && result.fps > 0) {
+              primaryCodec = enc;
+              bestFps = result.fps;
+            } else if (result.fps > bestFps && !primaryCodec.startsWith('h264_')) {
+              primaryCodec = enc;
+              bestFps = result.fps;
+            }
+          } else {
+            console.log(`[GpuManager] Benchmark: ${enc} = FAILED ✗`);
+          }
+        }
+
+        if (codecs.length > 0) {
+          if (bestFps === 0) bestFps = codecs[0].benchmarkFps;
+          physicalDevices.push({ vendor, codecs, primaryCodec, bestFps, deviceName });
         }
       }
     }
 
-    if (benchmarked.length === 0) {
+    if (physicalDevices.length === 0) {
       console.log('[GpuManager] All hardware encoders failed benchmark. Falling back to CPU (libx264).');
       this.devices = [this.createCpuFallback()];
     } else {
-      // Sort by FPS descending — fastest encoder first
-      this.devices = benchmarked.sort((a, b) => b.benchmarkFps - a.benchmarkFps);
-      console.log(`[GpuManager] Selected primary encoder: ${this.devices[0].encoderName} (${this.devices[0].benchmarkFps} fps)`);
+      // Sort by FPS descending — fastest device first
+      this.devices = physicalDevices.sort((a, b) => b.bestFps - a.bestFps);
+
+      console.log(`[GpuManager] ─── GPU Pool Summary ───`);
+      for (const dev of this.devices) {
+        const codecList = dev.codecs.map(c => `${c.encoderName}(${c.benchmarkFps}fps)`).join(', ');
+        console.log(`[GpuManager]   ${dev.deviceName || dev.vendor} [device ${dev.deviceIndex ?? '-'}] primary=${dev.primaryCodec} | codecs: ${codecList}`);
+      }
+      console.log(`[GpuManager] Primary GPU: ${this.devices[0].deviceName || this.devices[0].primaryCodec} (${this.devices[0].bestFps} fps)`);
     }
 
     this.initialized = true;
   }
 
   /**
-   * Get all available GPU devices, sorted by benchmark FPS (fastest first).
+   * Get all available physical GPU devices, sorted by benchmark FPS (fastest first).
    */
   getDevices(): GpuDevice[] {
     return [...this.devices];
@@ -249,95 +330,59 @@ export class GpuManagerService {
 
   /**
    * Allocate a GPU for a transcoding task.
-   * If preferredCodec is set (and is not 'auto'), use it directly.
-   * Otherwise, return the fastest available encoder.
+   * Picks a PHYSICAL device, then selects the codec (consistent per session).
    */
   allocate(options: AllocateOptions = {}): GpuAllocation {
     const { preferredCodec, isFiller } = options;
 
-    // If user explicitly chose a codec (not 'auto'), respect it
-    if (preferredCodec && preferredCodec !== 'auto') {
-      const device = this.devices.find(d => d.encoderName === preferredCodec);
-      return {
-        encoderName: preferredCodec,
-        ...this.getHwaccelConfig(preferredCodec, device?.deviceIndex)
-      };
+    // Pick physical device
+    let deviceIdx = 0;
+    if (isFiller && this.devices.length > 1) {
+      deviceIdx = 1; // Use secondary GPU for background filler tasks
     }
+    const device = this.devices[deviceIdx] || this.devices[0];
 
-    // Auto mode: return the fastest available encoder
-    let encoderName = 'libx264';
-    let deviceIndex: number | undefined;
-    
-    if (this.devices.length > 0) {
-      let targetIdx = 0;
-      if (isFiller && this.devices.length > 1) {
-        targetIdx = 1; // Use secondary GPU for background filler tasks
-      }
-      
-      encoderName = this.devices[targetIdx].encoderName;
-      deviceIndex = this.devices[targetIdx].deviceIndex;
-    }
-
-    let { hwaccelArgs, scaleFilterName } = this.getHwaccelConfig(encoderName, deviceIndex);
+    // Pick codec
+    const encoderName = this.resolveCodec(device, preferredCodec);
 
     return {
       encoderName,
-      hwaccelArgs,
-      scaleFilterName
+      ...this.getHwaccelConfig(encoderName, device.deviceIndex),
     };
   }
 
   /**
    * Allocate a GPU for a specific segment index using round-robin distribution.
-   * This enables the Worker Pool pattern: different segments are processed by different GPUs.
+   * Ensures codec consistency: the caller's preferredCodec is used on whichever GPU is picked.
    */
   allocateForSegment(segmentIndex: number, options: AllocateOptions = {}): GpuAllocation {
-    let encoderName = 'libx264';
-    let deviceIndex: number | undefined;
-    
-    if (this.devices.length > 0) {
-      // For >8K video, always use the primary (most powerful) GPU to avoid crashes on weaker integrated GPUs
-      let targetDeviceIdx = segmentIndex % this.devices.length;
-      if (options.resolution) {
-        const width = parseInt((options.resolution as string).split('x')[0], 10);
-        if (!isNaN(width) && width > 7680) {
-          targetDeviceIdx = 0;
-        }
-      }
-      
-      const device = this.devices[targetDeviceIdx];
-      encoderName = device.encoderName;
-      deviceIndex = device.deviceIndex;
+    if (this.devices.length === 0) {
+      return { encoderName: 'libx264', ...this.getHwaccelConfig('libx264') };
     }
-    
-    let { hwaccelArgs, scaleFilterName } = this.getHwaccelConfig(encoderName, deviceIndex);
+
+    const targetDeviceIdx = segmentIndex % this.devices.length;
+    const device = this.devices[targetDeviceIdx];
+    const encoderName = this.resolveCodec(device, options.preferredCodec);
 
     return {
       encoderName,
-      hwaccelArgs,
-      scaleFilterName
+      ...this.getHwaccelConfig(encoderName, device.deviceIndex),
     };
   }
 
   /**
    * Determine whether using multiple GPUs (Worker Pool) would benefit
-   * transcoding at a given target FPS. Returns true only if:
-   * 1. There are 2+ GPU devices available
-   * 2. The fastest single GPU cannot sustain the target FPS alone
+   * transcoding at a given target FPS.
    */
   canBenefitFromPool(targetFps: number): boolean {
-    // Need at least 2 devices to pool
     if (this.devices.length < 2) return false;
-
     const best = this.devices[0];
-    // If best device has 0 fps (CPU fallback) or can handle target alone — no need
-    if (best.benchmarkFps <= 0 || best.benchmarkFps >= targetFps) return false;
-
+    if (best.bestFps <= 0 || best.bestFps >= targetFps) return false;
     return true;
   }
 
   /**
-   * Returns the number of devices available for concurrent segment processing.
+   * Returns the number of physical devices available for concurrent segment processing.
    */
   getPoolSize(): number {
     return Math.max(1, this.devices.length);
@@ -354,11 +399,26 @@ export class GpuManagerService {
     return 'cpu';
   }
 
+  /**
+   * Resolve which codec to use on a device.
+   * Prefers h264 for HLS compatibility unless explicitly overridden.
+   */
+  private resolveCodec(device: GpuDevice, preferredCodec?: string): string {
+    if (preferredCodec && preferredCodec !== 'auto') {
+      const found = device.codecs.find(c => c.encoderName === preferredCodec);
+      if (found) return found.encoderName;
+      // Preferred codec not available on this device — fall back to primary
+      console.warn(`[GpuManager] Codec ${preferredCodec} not available on device ${device.deviceIndex ?? '-'}, using ${device.primaryCodec}`);
+    }
+    return device.primaryCodec;
+  }
+
   private createCpuFallback(): GpuDevice {
     return {
-      encoderName: 'libx264',
       vendor: 'cpu',
-      benchmarkFps: 0,
+      codecs: [{ encoderName: 'libx264', benchmarkFps: 0 }],
+      primaryCodec: 'libx264',
+      bestFps: 0,
     };
   }
 }
