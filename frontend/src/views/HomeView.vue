@@ -119,6 +119,7 @@ const handleBackgroundSelected = async (file: any) => {
 onMounted(async () => {
   if (authStore.user?.role === 'admin') {
     await settingsStore.fetchSystemSettings();
+    await settingsStore.fetchGpus();
   }
 });
 
@@ -349,14 +350,52 @@ const xmbCategories = computed(() => categories.map(cat => {
             }
           },
           {
-            id: 'gen-encoder',
-            label: () => t('settings.hardware_encoder') || 'Hardware Encoder',
-            value: () => settingsStore.hardwareEncoder,
+            id: 'gen-gpu-encoder',
+            label: () => 'GPU Encoder',
+            value: () => settingsStore.gpuConfig.encoderType,
             onSelect: async () => {
-              const encoders = ['cpu_h264', 'cpu_h265', 'cpu_av1', 'cpu_vp9', 'nvenc', 'amf', 'qsv', 'videotoolbox'];
-              const currentIdx = encoders.indexOf(settingsStore.hardwareEncoder);
+              const encoders = ['auto', 'cpu', 'qsv', 'nvenc', 'amf', 'videotoolbox', 'vaapi', 'v4l2m2m', 'rkmpp'];
+              const currentIdx = encoders.indexOf(settingsStore.gpuConfig.encoderType);
               const nextEncoder = encoders[(currentIdx + 1) % encoders.length];
-              await settingsStore.updateSystemSettings({ hardwareEncoder: nextEncoder });
+              await settingsStore.updateSystemSettings({ 
+                gpuConfig: { ...settingsStore.gpuConfig, encoderType: nextEncoder }
+              });
+            }
+          },
+          {
+            id: 'gen-gpu-codec',
+            label: () => 'GPU Codec',
+            value: () => settingsStore.gpuConfig.codecType,
+            onSelect: async () => {
+              const codecs = ['auto', 'h264', 'hevc', 'av1', 'vp8', 'vp9', 'mpeg2'];
+              const currentIdx = codecs.indexOf(settingsStore.gpuConfig.codecType);
+              const nextCodec = codecs[(currentIdx + 1) % codecs.length];
+              await settingsStore.updateSystemSettings({ 
+                gpuConfig: { ...settingsStore.gpuConfig, codecType: nextCodec }
+              });
+            }
+          },
+          {
+            id: 'gen-gpu-device',
+            label: () => 'Primary GPU Device',
+            value: () => settingsStore.gpuConfig.preferredDevice,
+            onSelect: async () => {
+              const devices = ['auto', ...settingsStore.gpus.map(g => g.deviceName || g.vendor)];
+              const currentIdx = devices.indexOf(settingsStore.gpuConfig.preferredDevice);
+              const nextDevice = devices[(currentIdx + 1) % devices.length];
+              await settingsStore.updateSystemSettings({ 
+                gpuConfig: { ...settingsStore.gpuConfig, preferredDevice: nextDevice }
+              });
+            }
+          },
+          {
+            id: 'gen-gpu-pool',
+            label: () => 'Multi-GPU Transcoding',
+            value: () => settingsStore.gpuConfig.multiGpuPool ? 'ON' : 'OFF',
+            onSelect: async () => {
+              await settingsStore.updateSystemSettings({ 
+                gpuConfig: { ...settingsStore.gpuConfig, multiGpuPool: !settingsStore.gpuConfig.multiGpuPool }
+              });
             }
           },
           {

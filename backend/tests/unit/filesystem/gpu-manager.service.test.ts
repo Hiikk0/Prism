@@ -237,66 +237,11 @@ describe('GpuManagerService', () => {
     });
   });
 
-  // ─────────────────────────────────────────────
-  // 4. Allocation: codec consistency
-  // ─────────────────────────────────────────────
-  describe('allocate() with preferredCodec', () => {
-    it('should use preferredCodec if available on the target device', async () => {
-      const manager = createTestManager();
-
-      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue([
-        'h264_qsv', 'hevc_qsv',
-      ]);
-      jest.spyOn(manager, 'benchmarkEncoder')
-        .mockResolvedValueOnce({ fps: 100 })   // h264_qsv device 0 (probe)
-        .mockResolvedValueOnce({ fps: 80 })    // hevc_qsv device 0 (benchmark)
-        .mockResolvedValueOnce({ fps: 0 })     // h264_qsv device 1 (probe fail)
-        .mockResolvedValueOnce({ fps: 0 })     // h264_qsv device 2 (probe fail)
-        .mockResolvedValueOnce({ fps: 0 });    // h264_qsv device 3 (probe fail)
-
-      await manager.initialize();
-
-      const allocation = manager.allocate({ preferredCodec: 'hevc_qsv' });
-      expect(allocation.encoderName).toBe('hevc_qsv');
-    });
-
-    it('should fallback to primaryCodec if preferred is not available on device', async () => {
-      const manager = createTestManager();
-
-      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_qsv']);
-      jest.spyOn(manager, 'benchmarkEncoder')
-        .mockResolvedValueOnce({ fps: 100 })
-        .mockResolvedValueOnce({ fps: 0 })
-        .mockResolvedValueOnce({ fps: 0 })
-        .mockResolvedValueOnce({ fps: 0 });
-
-      await manager.initialize();
-
-      const allocation = manager.allocate({ preferredCodec: 'av1_qsv' });
-      expect(allocation.encoderName).toBe('h264_qsv'); // fallback to primary
-    });
-
-    it('should fallback to auto if preferredCodec is "auto"', async () => {
-      const manager = createTestManager();
-
-      jest.spyOn(manager, 'discoverEncoders').mockResolvedValue(['h264_qsv']);
-      jest.spyOn(manager, 'benchmarkEncoder')
-        .mockResolvedValueOnce({ fps: 150 })
-        .mockResolvedValueOnce({ fps: 0 })
-        .mockResolvedValueOnce({ fps: 0 })
-        .mockResolvedValueOnce({ fps: 0 });
-
-      await manager.initialize();
-
-      const allocation = manager.allocate({ preferredCodec: 'auto' });
-      expect(allocation.encoderName).toBe('h264_qsv');
-    });
-  });
 
   // ─────────────────────────────────────────────
-  // 5. Allocation: round-robin for segments
+  // 4. Allocation: round-robin for segments
   // ─────────────────────────────────────────────
-  describe('allocateForSegment()', () => {
+  describe('allocate()', () => {
     it('should round-robin segments across physical GPUs with consistent codec', async () => {
       const manager = createTestManager();
 
@@ -313,9 +258,9 @@ describe('GpuManagerService', () => {
 
       await manager.initialize();
 
-      const seg0 = manager.allocateForSegment(0);
-      const seg1 = manager.allocateForSegment(1);
-      const seg2 = manager.allocateForSegment(2);
+      const seg0 = manager.allocate();
+      const seg1 = manager.allocate();
+      const seg2 = manager.allocate();
 
       // All segments use the same codec (h264_qsv = primary)
       expect(seg0.encoderName).toBe('h264_qsv');

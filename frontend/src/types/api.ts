@@ -58,6 +58,29 @@ export interface FileListResponse {
 
 // === Settings ===
 
+export interface GpuConfig {
+  encoderType: string;
+  codecType: string;
+  multiGpuPool: boolean;
+  preferredDevice: string;
+  previewConcurrency: number;
+}
+
+export interface GpuCodecInfo {
+  encoderName: string;
+  benchmarkFps: number;
+}
+
+export interface GpuDeviceInfo {
+  vendor: string;
+  deviceIndex?: number;
+  deviceName?: string;
+  codecs: GpuCodecInfo[];
+  primaryCodec: string;
+  bestFps: number;
+  totalScore: number;
+}
+
 export interface SystemSettings {
   registrationEnabled: boolean;
   guestLoginEnabled: boolean;
@@ -68,6 +91,7 @@ export interface SystemSettings {
   scannerIoConcurrency: number;
   transcodeMode: 'JIT' | 'DISK' | 'OFF';
   hardwareEncoder: string;
+  gpuConfig: GpuConfig;
   targetQualities: number[];
   keepJitResumeCache: boolean;
   updatedAt?: string;
@@ -83,6 +107,7 @@ export interface UpdateSettingsPayload {
   scannerIoConcurrency?: number;
   transcodeMode?: 'JIT' | 'DISK' | 'OFF';
   hardwareEncoder?: string;
+  gpuConfig?: GpuConfig;
   targetQualities?: number[];
   keepJitResumeCache?: boolean;
   createIfMissing?: boolean;

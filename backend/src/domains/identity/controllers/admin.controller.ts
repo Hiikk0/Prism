@@ -43,19 +43,36 @@ export class AdminController {
 
     // Trigger transcoder proactive start/stop if mode changed
     const transcoder = request.server.transcoder;
-    if (transcoder && data.transcodeMode) {
-      if (data.transcodeMode === 'DISK') {
-        transcoder.startProactiveTranscoding().catch(() => {});
-      } else if (data.transcodeMode === 'JIT') {
-        // If switching to JIT, stop library-wide proactive work but keep interactive
-        transcoder.stopBackgroundWork().catch(() => {});
-      } else if (data.transcodeMode === 'OFF') {
-        // If switching OFF, kill everything
-        transcoder.stopAllProcesses().catch(() => {});
+    if (transcoder) {
+      if (data.gpuConfig) {
+        await transcoder.stopAllProcesses();
+        if (request.server.gpuManager) {
+          request.server.gpuManager.applyConfig(data.gpuConfig);
+        }
+      }
+
+      if (data.transcodeMode) {
+        if (data.transcodeMode === 'DISK') {
+          transcoder.startProactiveTranscoding().catch(() => {});
+        } else if (data.transcodeMode === 'JIT') {
+          // If switching to JIT, stop library-wide proactive work but keep interactive
+          transcoder.stopBackgroundWork().catch(() => {});
+        } else if (data.transcodeMode === 'OFF') {
+          // If switching OFF, kill everything
+          transcoder.stopAllProcesses().catch(() => {});
+        }
       }
     }
 
     return reply.send(settings);
+  }
+
+  async getGpus(request: FastifyRequest, reply: FastifyReply) {
+    const gpuManager = request.server.gpuManager;
+    if (!gpuManager) {
+      return reply.send([]);
+    }
+    return reply.send(gpuManager.getDevices());
   }
 
   async listUsers(request: FastifyRequest, reply: FastifyReply) {

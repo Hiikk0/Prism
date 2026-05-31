@@ -66,6 +66,7 @@ const start = async () => {
     // Initialize GPU Manager — benchmark all available encoders at startup
     const gpuManager = new GpuManagerService();
     await gpuManager.initialize();
+    gpuManager.applyConfig(settings.gpuConfig);
     app.decorate('gpuManager', gpuManager);
 
     const previewConcurrency = settings.gpuConfig?.previewConcurrency ?? 1;

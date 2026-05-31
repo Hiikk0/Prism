@@ -14,6 +14,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   const preHandlers = [authMiddleware(), rbacMiddleware(['admin'])];
 
   fastify.get('/settings', { preHandler: preHandlers }, adminController.getSettings.bind(adminController));
+  fastify.get('/settings/gpus', { preHandler: preHandlers }, adminController.getGpus.bind(adminController));
   fastify.patch('/settings', { preHandler: preHandlers }, adminController.updateSettings.bind(adminController));
   
   fastify.get('/users', { preHandler: preHandlers }, adminController.listUsers.bind(adminController));

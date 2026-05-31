@@ -267,7 +267,7 @@ const initPlayer = async () => {
         bufferingGoal: 12,
         startAtSegmentBoundary: true,
         retryParameters: {
-          timeout: 30000,
+          timeout: 0,
           maxAttempts: 3,
           baseDelay: 500,
           backoffFactor: 1.5,
@@ -275,7 +275,7 @@ const initPlayer = async () => {
       },
       manifest: {
         retryParameters: {
-          timeout: 30000,
+          timeout: 0,
           maxAttempts: 3,
           baseDelay: 500,
           backoffFactor: 1.5,

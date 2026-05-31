@@ -6,7 +6,7 @@ import { SettingsRepository } from '../../identity/repositories/settings.reposit
 import { mkdir, access, writeFile, readFile, stat, readdir, rm } from 'fs/promises';
 import { IMediaFile } from '../models/mediafile.model';
 import { PlaybackProgressModel } from '../../player/models/playback-progress.model';
-import { GpuManagerService } from './gpu-manager.service';
+import { GpuManagerService, GpuAllocation } from './gpu-manager.service';
 
 export class TranscodingService {
   private readonly SEGMENT_DURATION = 2;
@@ -334,7 +334,7 @@ export class TranscodingService {
    * Used by the Lookahead Worker Pool to distribute segments across GPUs.
    */
   private async startSingleSegmentTranscode(
-    file: IMediaFile, quality: number, allocation: { encoderName: string; hwaccelArgs: string[] },
+    file: IMediaFile, quality: number, allocation: GpuAllocation,
     startSeconds: number, segmentIndex: number
   ): Promise<void> {
     const outputDir = path.join(this.transcodeDir, file._id.toString(), quality.toString());
@@ -515,7 +515,6 @@ export class TranscodingService {
 
     const fullPath = path.join(this.mediaRoot, file.path);
     const allocation = this.gpuManager.allocate({
-      preferredCodec: settings?.gpuConfig?.preferredCodec || 'auto',
       resolution: file.metadata?.resolution,
       isFiller: isFiller
     });

@@ -1,9 +1,11 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IGpuConfig {
-  autoDetect: boolean;            // true = auto-detect GPU based on benchmark results (fastest first)
-  preferredCodec: string;         // 'auto', 'h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264', etc.
-  previewConcurrency: number;     // Max concurrent preview ffmpeg processes (prevents driver crashes)
+  encoderType: string;
+  codecType: string;
+  multiGpuPool: boolean;
+  preferredDevice: string;
+  previewConcurrency: number;
 }
 
 export interface ISettings extends Document {
@@ -24,8 +26,10 @@ export interface ISettings extends Document {
 }
 
 const GpuConfigSchema = new Schema({
-  autoDetect: { type: Boolean, default: true },
-  preferredCodec: { type: String, default: 'auto' },
+  encoderType: { type: String, default: 'auto' },
+  codecType: { type: String, default: 'auto' },
+  multiGpuPool: { type: Boolean, default: true },
+  preferredDevice: { type: String, default: 'auto' },
   previewConcurrency: { type: Number, default: 1 },
 }, { _id: false });
 

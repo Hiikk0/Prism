@@ -112,6 +112,21 @@ export class MediaProcessorService {
         metadata.title = audioMetadata.common.title;
         metadata.album = audioMetadata.common.album;
         
+        const picture = audioMetadata.common.picture?.[0];
+        if (picture) {
+          const thumbnailName = `${file._id.toString()}_thumb.webp`;
+          const thumbPath = path.join(this.thumbnailDir, thumbnailName);
+          try {
+            await sharp(picture.data, { failOn: 'none' })
+              .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+              .webp({ quality: 80 })
+              .toFile(thumbPath);
+            metadata.thumbnailPath = path.join('.cache/thumbnails', thumbnailName);
+          } catch (err) {
+            console.error(`Sharp error extracting music cover for ${file.savedName}:`, err);
+          }
+        }
+        
         await this.generateWaveform(file, fullPath, metadata);
       } else if (file.mimeType.startsWith('image')) {
         const thumbnailName = `${file._id.toString()}_thumb.webp`;

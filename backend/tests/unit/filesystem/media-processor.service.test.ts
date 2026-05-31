@@ -11,6 +11,14 @@ jest.mock('@/domains/identity/repositories/settings.repository');
 jest.mock('@/domains/filesystem/services/gpu-manager.service');
 jest.mock('fluent-ffmpeg');
 jest.mock('load-esm');
+jest.mock('sharp', () => {
+    const mockSharpInstance = {
+        resize: jest.fn().mockReturnThis(),
+        webp: jest.fn().mockReturnThis(),
+        toFile: jest.fn().mockResolvedValue(undefined)
+    };
+    return jest.fn(() => mockSharpInstance);
+});
 jest.mock('fs/promises', () => ({
     writeFile: jest.fn().mockResolvedValue(undefined)
 }));
@@ -125,6 +133,33 @@ describe('MediaProcessorService', () => {
                 duration: 180,
                 artist: 'Artist',
                 title: 'Song'
+            })
+        }));
+    });
+
+    it('should extract cover from audio metadata if picture exists', async () => {
+        const mockMetadata = {
+            format: { duration: 180 },
+            common: { 
+                artist: 'Artist', 
+                title: 'Song', 
+                album: 'Album',
+                picture: [{ data: Buffer.from('mock-image-data'), format: 'image/jpeg' }]
+            }
+        };
+        mockMm.parseFile.mockResolvedValue(mockMetadata);
+        mockRepo.findById.mockResolvedValue({ 
+            _id: 'file_audio_cover', 
+            mimeType: 'audio/mpeg', 
+            path: 'song.mp3', 
+            savedName: 'song.mp3' 
+        } as any);
+
+        await mediaProcessorService.processFile('file_audio_cover');
+
+        expect(mockRepo.update).toHaveBeenCalledWith('file_audio_cover', expect.objectContaining({
+            metadata: expect.objectContaining({
+                thumbnailPath: expect.stringMatching(/file_audio_cover_thumb\.webp/)
             })
         }));
     });

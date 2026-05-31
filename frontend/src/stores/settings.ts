@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import i18n from '@/i18n';
 import api from '@/api/api';
-import type { UpdateSettingsPayload } from '@/types/api';
+import type { UpdateSettingsPayload, GpuDeviceInfo } from '@/types/api';
 
 export const useSettingsStore = defineStore('settings', () => {
   // Localization
@@ -23,9 +23,17 @@ export const useSettingsStore = defineStore('settings', () => {
   const scannerIoConcurrency = ref(10);
   const transcodeMode = ref<'JIT' | 'DISK' | 'OFF'>('OFF');
   const hardwareEncoder = ref<string>('cpu_h264');
+  const gpuConfig = ref({
+    encoderType: 'auto',
+    codecType: 'auto',
+    multiGpuPool: true,
+    preferredDevice: 'auto',
+    previewConcurrency: 1,
+  });
   const targetQualities = ref<number[]>([1080, 720, 480]);
   const keepJitResumeCache = ref(false);
   const loading = ref(false);
+  const gpus = ref<GpuDeviceInfo[]>([]);
 
   // Fetch from backend
   const fetchSystemSettings = async () => {
@@ -41,6 +49,7 @@ export const useSettingsStore = defineStore('settings', () => {
       scannerIoConcurrency.value = data.scannerIoConcurrency;
       transcodeMode.value = data.transcodeMode || 'OFF';
       hardwareEncoder.value = data.hardwareEncoder || 'cpu_h264';
+      if (data.gpuConfig) gpuConfig.value = data.gpuConfig;
       targetQualities.value = data.targetQualities || [1080, 720, 480];
       keepJitResumeCache.value = !!data.keepJitResumeCache;
     } catch (err) {
@@ -63,6 +72,15 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   };
 
+  const fetchGpus = async () => {
+    try {
+      const { data } = await api.get('/admin/settings/gpus');
+      gpus.value = data;
+    } catch (err) {
+      console.error('Failed to fetch GPUs', err);
+    }
+  };
+
   // Update backend
   const updateSystemSettings = async (payload: UpdateSettingsPayload) => {
     loading.value = true;
@@ -77,6 +95,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (data.scannerIoConcurrency !== undefined) scannerIoConcurrency.value = data.scannerIoConcurrency;
       if (data.transcodeMode !== undefined) transcodeMode.value = data.transcodeMode;
       if (data.hardwareEncoder !== undefined) hardwareEncoder.value = data.hardwareEncoder;
+      if (data.gpuConfig !== undefined) gpuConfig.value = data.gpuConfig;
       if (data.targetQualities !== undefined) targetQualities.value = data.targetQualities;
       if (data.keepJitResumeCache !== undefined) keepJitResumeCache.value = data.keepJitResumeCache;
     } catch (err) {
@@ -127,6 +146,7 @@ export const useSettingsStore = defineStore('settings', () => {
     scannerIoConcurrency,
     transcodeMode,
     hardwareEncoder,
+    gpuConfig,
     targetQualities,
     keepJitResumeCache,
     activeTheme,
@@ -135,8 +155,10 @@ export const useSettingsStore = defineStore('settings', () => {
     availableLanguages,
     availableThemes,
     loading,
+    gpus,
     fetchSystemSettings,
     fetchPublicSettings,
+    fetchGpus,
     updateSystemSettings
   };
 });
